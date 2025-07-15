@@ -1,7 +1,7 @@
 import streamlit as st
 import re
 import os
-from mistral_module import generateText
+from mistral_module import generateText, resumeText
 from serpapi_module import google_search
 from scraping_module import scrap_url
 
@@ -37,13 +37,18 @@ if st.button("Générer le plan et scrapper le web"):
     if serpapi_key:
         with st.spinner("Recherche de liens sur Google..."):
             links = google_search(search_query)
-        st.subheader("Liens trouvés :")
+        st.subheader("Liens trouvés et extraits scrappés :")
+        all_contents = []
         for link in links[:3]:
-            st.write(link)
-        if links:
-            with st.spinner("Scraping du premier lien..."):
-                content = scrap_url(links[0])
-            st.subheader("Extrait du contenu scrappé :")
+            st.write(f"[Lien]({link})")
+            with st.spinner(f"Scraping de {link}..."):
+                content = scrap_url(link)
             st.write(content)
+            all_contents.append(content)
+        # Résumé global de tous les contenus scrappés
+        if all_contents:
+            with st.spinner("Résumé global de tous les contenus..."):
+                global_resume = resumeText("\n\n".join(all_contents))
+            st.markdown(f"**Résumé global simplifié :** {global_resume}")
     else:
         st.warning("Clé SerpAPI manquante dans le .env pour la recherche Google.") 
