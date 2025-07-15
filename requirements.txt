@@ -1,4 +1,6 @@
 streamlit
-requests
-python-dotenv
 mistralai
+python-dotenv
+requests
+serpapi
+beautifulsoup4
