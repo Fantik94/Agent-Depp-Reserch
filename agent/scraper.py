@@ -5,8 +5,58 @@ from typing import List, Dict, Optional
 import logging
 from config import Config
 import time
+import re
 
 logger = logging.getLogger(__name__)
+
+def detect_language(text: str) -> str:
+    """Détecte la langue d'un texte (français ou anglais)"""
+    if not text or len(text.strip()) < 10:
+        return 'unknown'
+    
+    text_lower = text.lower()
+    
+    # Mots-clés français courants
+    french_indicators = [
+        'le ', 'la ', 'les ', 'de ', 'du ', 'des ', 'et ', 'est ', 'une ', 'dans ', 
+        'pour ', 'avec ', 'sur ', 'par ', 'que ', 'qui ', 'sont ', 'ont ', 'peut ',
+        'tout ', 'tous ', 'cette ', 'ces ', 'son ', 'ses ', 'nous ', 'vous ', 'leur ',
+        'français', 'france', 'paris', 'marseille', 'lyon', 'toulouse'
+    ]
+    
+    # Mots-clés anglais courants  
+    english_indicators = [
+        'the ', 'and ', 'is ', 'are ', 'was ', 'were ', 'have ', 'has ', 'had ',
+        'will ', 'would ', 'could ', 'should ', 'this ', 'that ', 'these ', 'those ',
+        'with ', 'from ', 'they ', 'them ', 'their ', 'there ', 'where ', 'when ',
+        'english', 'america', 'american', 'british', 'london', 'new york'
+    ]
+    
+    # Caractères spécifiques
+    chinese_chars = re.findall(r'[\u4e00-\u9fff]', text)
+    if chinese_chars and len(chinese_chars) > 3:
+        return 'zh'
+    
+    arabic_chars = re.findall(r'[\u0600-\u06ff]', text)
+    if arabic_chars and len(arabic_chars) > 3:
+        return 'ar'
+    
+    # Compter les indicateurs
+    french_score = sum(1 for indicator in french_indicators if indicator in text_lower)
+    english_score = sum(1 for indicator in english_indicators if indicator in text_lower)
+    
+    if french_score > english_score and french_score > 2:
+        return 'fr'
+    elif english_score > french_score and english_score > 2:
+        return 'en'
+    else:
+        return 'unknown'
+
+def is_language_accepted(text: str) -> bool:
+    """Vérifie si le contenu est dans une langue acceptée (français ou anglais)"""
+    accepted_languages = ['fr', 'en']
+    lang = detect_language(text)
+    return lang in accepted_languages or lang == 'unknown'
 
 class WebScraper:
     """Scraper web utilisant Newspaper3k et BeautifulSoup"""
@@ -26,6 +76,13 @@ class WebScraper:
             article.parse()
             
             if not article.text or len(article.text.strip()) < 100:
+                return None
+            
+            # Vérifier la langue du contenu
+            content_to_check = f"{article.title or ''} {article.text[:500]}"
+            if not is_language_accepted(content_to_check):
+                lang = detect_language(content_to_check)
+                logger.debug(f"🚫 Article rejeté (langue: {lang}): {url}")
                 return None
             
             return {
@@ -84,6 +141,13 @@ class WebScraper:
             if not content or len(content.strip()) < 100:
                 return None
             
+            # Vérifier la langue du contenu
+            content_to_check = f"{title} {content[:500]}"
+            if not is_language_accepted(content_to_check):
+                lang = detect_language(content_to_check)
+                logger.debug(f"🚫 Article rejeté (langue: {lang}): {url}")
+                return None
+            
             return {
                 'url': url,
                 'title': title,
@@ -110,11 +174,12 @@ class WebScraper:
         return result
     
     def scrape_multiple_urls(self, urls: List[str], max_articles: int = None, method: str = "both") -> List[Dict]:
-        """Scraper plusieurs URLs avec méthode configurable"""
+        """Scraper plusieurs URLs avec méthode configurable et filtre de langue"""
         if max_articles is None:
             max_articles = self.config.MAX_SCRAPED_ARTICLES
         
         scraped_articles = []
+        failed_count = 0
         
         for i, url in enumerate(urls[:max_articles * 2]):  # Essayer plus d'URLs au cas où certaines échouent
             if len(scraped_articles) >= max_articles:
@@ -136,9 +201,16 @@ class WebScraper:
             
             if article:
                 scraped_articles.append(article)
+            else:
+                failed_count += 1
             
             # Pause pour éviter de surcharger les serveurs
             time.sleep(1)
         
-        logger.info(f"Articles scrapés avec succès: {len(scraped_articles)}")
+        # Log des statistiques finales
+        if failed_count > 0:
+            logger.info(f"Articles scrapés avec succès: {len(scraped_articles)} (échecs: {failed_count})")
+        else:
+            logger.info(f"Articles scrapés avec succès: {len(scraped_articles)}")
+        
         return scraped_articles 

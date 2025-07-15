@@ -23,9 +23,9 @@ class ResearchAgent:
         
         logger.info(f"Début de la recherche pour: {user_query}")
         
-        # Étape 1: Génération du plan de recherche
-        logger.info("📋 Génération du plan de recherche...")
-        plan = self.llm_client.generate_search_plan(user_query)
+        # Étape 1: Génération du plan de recherche intelligent
+        logger.info("📋 Génération du plan de recherche intelligent...")
+        plan = self.llm_client.generate_deep_search_plan(user_query)
         
         # Étape 2: Recherche web pour chaque requête du plan
         logger.info("🔍 Recherche web en cours...")

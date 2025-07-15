@@ -264,9 +264,9 @@ def display_search_interface():
             # Sélecteur de moteurs de recherche
             search_engines = st.multiselect(
                 "🔍 Moteurs de recherche",
-                ["SerpApi", "Serper", "SearXNG", "Google-HTML", "Bing-HTML", "DuckDuckGo-HTML", "Startpage-HTML"],
-                default=["SerpApi", "Google-HTML"],
-                help="Choisissez les moteurs à utiliser (dans l'ordre). HTML contourne les limitations."
+                ["SerpApi", "Serper", "SearXNG", "Smart-Search"],
+                default=["SerpApi", "Smart-Search"],
+                help="Smart-Search = Bing + sites spécialisés selon le thème (animaux, tech, santé...)"
             )
             
             # Méthode de scraping
@@ -284,7 +284,7 @@ def display_search_interface():
         search_button = st.button("🚀 Lancer la recherche", type="primary", use_container_width=True)
     
     with col2:
-        if st.button("🗑️ Effacer", use_container_width=True):
+        if st.button("🗑️ Effacer", use_container_width=True, help="Efface les résultats et arrête la recherche en cours"):
             # Arrêter la recherche en cours
             st.session_state.search_running = False
             
@@ -465,11 +465,8 @@ def research_with_progress_tracking(agent, query, deep_search=False, max_article
         # Étape 1: Génération du plan
         tracker.start_step("plan", "Génération du plan", "Analyse de votre question avec Mistral AI")
         
-        # Générer un plan plus détaillé en mode approfondi
-        if deep_search:
-            plan = agent.llm_client.generate_deep_search_plan(query)
-        else:
-            plan = agent.llm_client.generate_search_plan(query)
+        # Générer un plan intelligent (toujours approfondi maintenant)
+        plan = agent.llm_client.generate_deep_search_plan(query)
             
         queries_count = len(plan.get("requetes_recherche", []))
         mode_text = "approfondie" if deep_search else "standard"
@@ -510,23 +507,8 @@ def research_with_progress_tracking(agent, query, deep_search=False, max_article
             return None
             
         tracker.start_step("scraping", "Analyse des articles", f"Extraction du contenu de {len(unique_results)} sources")
-        
-        # Filtrer les résultats fallback pour le scraping
-        scrapable_results = [result for result in unique_results if result['source'] != 'fallback']
-        fallback_count = len(unique_results) - len(scrapable_results)
-        
-        if fallback_count > 0:
-            logger.info(f"⚠️ {fallback_count} résultats de fallback ignorés pour le scraping")
-            add_search_log(f"⚠️ {fallback_count} résultats génériques ignorés (évite les erreurs)")
-        
-        if scrapable_results:
-            urls_to_scrape = [result['url'] for result in scrapable_results[:max_articles * 2]]
-            scraped_articles = agent.scraper.scrape_multiple_urls(urls_to_scrape, max_articles=max_articles, method=scraping_method)
-        else:
-            logger.warning("⚠️ Aucune URL scrapable trouvée, utilisation de la synthèse basique")
-            add_search_log("⚠️ Aucun article à scraper - synthèse basée sur les snippets seulement")
-            scraped_articles = []
-        
+        urls_to_scrape = [result['url'] for result in unique_results[:max_articles * 2]]
+        scraped_articles = agent.scraper.scrape_multiple_urls(urls_to_scrape, max_articles=max_articles, method=scraping_method)
         tracker.complete_step("scraping", "Articles analysés", f"{len(scraped_articles)} articles extraits avec succès")
         
         # Étape 4: Synthèse
@@ -700,10 +682,8 @@ def display_sidebar():
             st.info("ℹ️ Serper.dev non configuré")
         
         st.success("✅ SearXNG (gratuit)")
-        st.success("✅ Google HTML (gratuit)")
-        st.success("✅ Bing HTML (gratuit)")
-        st.success("✅ DuckDuckGo HTML (gratuit)")
-        st.success("✅ Startpage HTML (gratuit)")
+        st.success("✅ Smart-Search (gratuit)")
+        st.info("🧠 Smart-Search = Bing + sites spécialisés (Wamiz, 30 Millions d'Amis, etc.)")
         
         # Méthodes de scraping
         st.markdown("**📰 Scraping disponible :**")
@@ -1039,23 +1019,39 @@ def display_research_insights(result):
     """Affiche des insights détaillés sur la recherche"""
     st.markdown("### 🔬 Analyse approfondie de la recherche")
     
-    # Plan de recherche détaillé
+    # Plan de recherche détaillé et intelligent
     if result.get('plan'):
         plan = result['plan']
-        with st.expander("📋 Plan de recherche généré", expanded=True):
-            st.markdown("**🎯 Requêtes de recherche :**")
+        with st.expander("📋 Plan de recherche intelligent", expanded=True):
+            # Analyse de la question
+            if plan.get('analyse'):
+                st.info(f"🧠 **Analyse de votre question :** {plan['analyse']}")
+            
+            # Plan d'action structuré
+            if plan.get('plan_etapes'):
+                st.markdown("**📊 Plan d'action en étapes :**")
+                for i, etape in enumerate(plan['plan_etapes'], 1):
+                    st.markdown(f"  {i}. {etape}")
+                st.markdown("---")
+            
+            # Requêtes de recherche
+            st.markdown("**🎯 Requêtes de recherche optimisées :**")
             for i, query in enumerate(plan.get('requetes_recherche', []), 1):
                 st.markdown(f"  {i}. `{query}`")
             
-            if plan.get('types_sources'):
-                st.markdown("**📚 Types de sources ciblées :**")
-                for source_type in plan['types_sources']:
-                    st.markdown(f"  • {source_type}")
+            col1, col2 = st.columns(2)
             
-            if plan.get('questions_secondaires'):
-                st.markdown("**❓ Questions secondaires :**")
-                for question in plan['questions_secondaires']:
-                    st.markdown(f"  • {question}")
+            with col1:
+                if plan.get('types_sources'):
+                    st.markdown("**📚 Types de sources ciblées :**")
+                    for source_type in plan['types_sources']:
+                        st.markdown(f"  • {source_type}")
+            
+            with col2:
+                if plan.get('questions_secondaires'):
+                    st.markdown("**❓ Questions secondaires à explorer :**")
+                    for question in plan['questions_secondaires']:
+                        st.markdown(f"  • {question}")
             
             if plan.get('strategie'):
                 st.markdown(f"**🎲 Stratégie :** {plan['strategie']}")
@@ -1308,6 +1304,11 @@ def main():
     
     # Gérer la recherche
     if search_button and user_query:
+        # 🧹 CLEAR AUTOMATIQUE - Nettoyer l'interface pour une nouvelle recherche
+        st.session_state.last_result = None
+        st.session_state.search_steps = {}
+        st.session_state.search_logs = []
+        
         # Ajouter à l'historique
         if user_query not in st.session_state.search_history:
             st.session_state.search_history.append(user_query)
@@ -1318,9 +1319,11 @@ def main():
         # Configurer le provider LLM sélectionné
         st.session_state.agent = get_agent(llm_provider, search_engines, scraping_method)
         
-        # Afficher la configuration utilisée
+        # Messages de démarrage
+        add_search_log("🧹 Interface nettoyée - Nouvelle recherche")
         config_info = f"🤖 {llm_provider.upper()} | 🔍 {', '.join(search_engines)} | 📰 {scraping_method}"
         add_search_log(f"⚙️ Configuration: {config_info}")
+        add_search_log(f"🎯 Question: {user_query}")
         
         # Placeholder pour les mises à jour en temps réel
         progress_placeholder = st.empty()

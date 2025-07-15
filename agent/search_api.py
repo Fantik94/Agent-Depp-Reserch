@@ -6,7 +6,7 @@ import logging
 import urllib.parse
 import time
 import random
-from html_search import search_with_html
+from smart_search import search_with_smart
 
 logger = logging.getLogger(__name__)
 
@@ -97,48 +97,15 @@ class SearchAPI:
         
         return []
     
-    def search_html_google(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Recherche Google avec HTML (remplace DuckDuckGo)"""
+    def search_smart(self, query: str, max_results: int = 10) -> List[Dict]:
+        """Recherche intelligente (Bing + sites spécialisés)"""
         try:
-            logger.info(f"🔍 Tentative Google HTML pour: {query}")
-            results = search_with_html(query, max_results, engine="google")
-            logger.info(f"✅ Google HTML: {len(results)} résultats trouvés")
+            logger.info(f"🧠 Recherche intelligente pour: {query}")
+            results = search_with_smart(query, max_results)
+            logger.info(f"✅ Recherche intelligente: {len(results)} résultats trouvés")
             return results
         except Exception as e:
-            logger.error(f"❌ Erreur Google HTML: {e}")
-            return []
-    
-    def search_html_bing(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Recherche Bing avec HTML comme alternative"""
-        try:
-            logger.info(f"🔍 Tentative Bing HTML pour: {query}")
-            results = search_with_html(query, max_results, engine="bing")
-            logger.info(f"✅ Bing HTML: {len(results)} résultats trouvés")
-            return results
-        except Exception as e:
-            logger.error(f"❌ Erreur Bing HTML: {e}")
-            return []
-    
-    def search_html_startpage(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Recherche Startpage avec HTML (proxy Google anonyme)"""
-        try:
-            logger.info(f"🔍 Tentative Startpage HTML pour: {query}")
-            results = search_with_html(query, max_results, engine="startpage")
-            logger.info(f"✅ Startpage HTML: {len(results)} résultats trouvés")
-            return results
-        except Exception as e:
-            logger.error(f"❌ Erreur Startpage HTML: {e}")
-            return []
-    
-    def search_html_duckduckgo(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Recherche DuckDuckGo avec HTML"""
-        try:
-            logger.info(f"🔍 Tentative DuckDuckGo HTML pour: {query}")
-            results = search_with_html(query, max_results, engine="duckduckgo")
-            logger.info(f"✅ DuckDuckGo HTML: {len(results)} résultats trouvés")
-            return results
-        except Exception as e:
-            logger.error(f"❌ Erreur DuckDuckGo HTML: {e}")
+            logger.error(f"❌ Erreur recherche intelligente: {e}")
             return []
     
     def search_serper(self, query: str, max_results: int = 10) -> List[Dict]:
@@ -190,101 +157,34 @@ class SearchAPI:
         return []
     
     def create_fallback_results(self, query: str) -> List[Dict]:
-        """Crée des résultats de fallback basés sur des sites populaires avec URLs valides"""
+        """Crée des résultats de fallback basés sur des sites populaires"""
         logger.info(f"🆘 Création de résultats de fallback pour: {query}")
         
-        # Mots-clés pour catégoriser la recherche
-        query_lower = query.lower()
+        # Sites populaires où chercher
+        sites = [
+            "wikipedia.org",
+            "lemonde.fr",
+            "lefigaro.fr",
+            "franceinfo.fr",
+            "liberation.fr",
+            "futura-sciences.com",
+            "doctissimo.fr",
+            "sante.journaldesfemmes.fr"
+        ]
         
         results = []
+        encoded_query = urllib.parse.quote_plus(query)
         
-        # Fallback intelligent selon le type de requête
-        if any(word in query_lower for word in ['santé', 'maladie', 'symptôme', 'médical', 'docteur']):
-            results.extend([
-                {
-                    'title': f"Information médicale sur {query}",
-                    'url': "https://www.ameli.fr/",
-                    'snippet': f"Informations fiables sur {query} - Site officiel de l'Assurance Maladie",
-                    'source': 'fallback'
-                },
-                {
-                    'title': f"Conseils santé : {query}",
-                    'url': "https://www.doctissimo.fr/",
-                    'snippet': f"Conseils et informations santé concernant {query}",
-                    'source': 'fallback'
-                }
-            ])
-        elif any(word in query_lower for word in ['technologie', 'intelligence artificielle', 'ia', 'informatique', 'digital']):
-            results.extend([
-                {
-                    'title': f"Actualités tech : {query}",
-                    'url': "https://www.futura-sciences.com/tech/",
-                    'snippet': f"Dernières actualités et découvertes sur {query}",
-                    'source': 'fallback'
-                },
-                {
-                    'title': f"Tech et innovation : {query}",
-                    'url': "https://www.01net.com/",
-                    'snippet': f"News et analyses tech sur {query}",
-                    'source': 'fallback'
-                }
-            ])
-        elif any(word in query_lower for word in ['science', 'recherche', 'étude', 'découverte']):
-            results.extend([
-                {
-                    'title': f"Sciences et recherche : {query}",
-                    'url': "https://www.futura-sciences.com/",
-                    'snippet': f"Actualités scientifiques et découvertes sur {query}",
-                    'source': 'fallback'
-                },
-                {
-                    'title': f"Recherche scientifique : {query}",
-                    'url': "https://www.cnrs.fr/",
-                    'snippet': f"Travaux de recherche du CNRS concernant {query}",
-                    'source': 'fallback'
-                }
-            ])
-        else:
-            # Fallback général avec des sites fiables
-            results.extend([
-                {
-                    'title': f"Encyclopédie : {query}",
-                    'url': "https://fr.wikipedia.org/",
-                    'snippet': f"Définitions et informations encyclopédiques sur {query}",
-                    'source': 'fallback'
-                },
-                {
-                    'title': f"Actualités : {query}",
-                    'url': "https://www.francetvinfo.fr/",
-                    'snippet': f"Dernières actualités concernant {query}",
-                    'source': 'fallback'
-                },
-                {
-                    'title': f"Culture et société : {query}",
-                    'url': "https://www.radiofrance.fr/",
-                    'snippet': f"Analyses et débats sur {query}",
-                    'source': 'fallback'
-                }
-            ])
-        
-        # Ajouter des sources complémentaires
-        results.extend([
-            {
-                'title': f"Forum et discussions : {query}",
-                'url': "https://www.reddit.com/",
-                'snippet': f"Discussions et avis de la communauté sur {query}",
+        for site in sites[:5]:  # Limiter à 5 sites
+            results.append({
+                'title': f"Recherche '{query}' sur {site}",
+                'url': f"https://{site}/search?q={encoded_query}",
+                'snippet': f"Résultats de recherche pour '{query}' sur {site}",
                 'source': 'fallback'
-            },
-            {
-                'title': f"Ressources académiques : {query}",
-                'url': "https://scholar.google.com/",
-                'snippet': f"Publications et articles académiques sur {query}",
-                'source': 'fallback'
-            }
-        ])
+            })
         
         logger.info(f"🔄 {len(results)} résultats de fallback créés")
-        return results[:5]  # Limiter à 5 résultats
+        return results
     
     def search_web(self, query: str, max_results: int = None, enabled_engines: List[str] = None) -> List[Dict]:
         """Recherche web avec multiple APIs et fallbacks configurables"""
@@ -292,7 +192,7 @@ class SearchAPI:
             max_results = self.config.MAX_SEARCH_RESULTS
         
         if enabled_engines is None:
-            enabled_engines = ["SerpApi", "SearXNG", "Serper", "Google-HTML", "DuckDuckGo-HTML"]
+            enabled_engines = ["SerpApi", "SearXNG", "Serper", "Smart-Search"]
         
         logger.info(f"🚀 Début recherche pour: '{query}'")
         
@@ -320,41 +220,26 @@ class SearchAPI:
                 engine_results = self.search_serper(clean_query, max_results)
             elif engine == "SearXNG":
                 engine_results = self.search_searxng(clean_query, max_results)
-            elif engine == "Google-HTML":
-                engine_results = self.search_html_google(clean_query, max_results)
-            elif engine == "Bing-HTML":
-                engine_results = self.search_html_bing(clean_query, max_results)
-            elif engine == "Startpage-HTML":
-                engine_results = self.search_html_startpage(clean_query, max_results)
-            elif engine == "DuckDuckGo-HTML":
-                engine_results = self.search_html_duckduckgo(clean_query, max_results)
+            elif engine == "Smart-Search":
+                engine_results = self.search_smart(clean_query, max_results)
             else:
                 logger.warning(f"⚠️ Moteur {engine} non supporté ou non configuré")
                 continue
             
-            if engine_results:
-                logger.info(f"✅ {engine}: {len(engine_results)} résultats trouvés")
-                results.extend(engine_results)
-                
-                # Arrêt anticipé si on a suffisamment de résultats de qualité
-                if len(engine_results) >= max_results // 2:
-                    logger.info(f"✅ {engine} suffisant: {len(engine_results)} résultats - arrêt anticipé")
-                    break
-            else:
-                logger.warning(f"⚠️ {engine}: aucun résultat trouvé")
+            results.extend(engine_results)
+            
+            # Arrêt anticipé si on a suffisamment de résultats
+            if len(engine_results) >= max_results // 2:
+                logger.info(f"✅ {engine} suffisant: {len(engine_results)} résultats - arrêt anticipé")
+                break
             
             # Délai entre les moteurs
             time.sleep(0.5 if engine == "SerpApi" else 1)
         
-        # Utiliser fallback seulement si vraiment aucun résultat
+        # Stratégie 5: Fallback avec sites populaires
         if len(results) == 0:
-            logger.warning("⚠️ Aucun résultat trouvé avec tous les moteurs, utilisation du fallback")
+            logger.warning("⚠️ Aucun résultat trouvé, utilisation du fallback")
             results = self.create_fallback_results(clean_query)
-        elif len(results) < 3:
-            # Ajouter quelques résultats de fallback si on en a très peu
-            logger.info(f"ℹ️ Seulement {len(results)} résultats trouvés, ajout de fallbacks complémentaires")
-            fallback_results = self.create_fallback_results(clean_query)[:2]  # Max 2 fallbacks
-            results.extend(fallback_results)
         
         # Nettoyer et dédupliquer
         seen_urls = set()

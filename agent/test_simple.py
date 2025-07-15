@@ -1,106 +1,129 @@
 #!/usr/bin/env python3
 """
-Test simple pour diagnostiquer les problèmes de l'agent
+Test simple de l'agent de recherche (sans interface)
 """
 
 import logging
 from search_api import SearchAPI
-from llm_universal import UniversalLLMClient
+from llm_client import MistralLLMClient
+import time
 
-# Configuration du logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Configuration des logs
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
-def test_plan_generation():
-    """Test de génération de plan avec différentes requêtes"""
-    print("🧪 Test de génération de plan")
-    print("=" * 50)
-    
-    llm_client = UniversalLLMClient(provider="mistral")
-    
-    # Tester différentes requêtes
-    queries = [
-        "les chats sont-ils méchants",
-        "intelligence artificielle avantages",
-        "recette de crêpes facile"
-    ]
-    
-    for query in queries:
-        print(f"\n🔍 Requête: {query}")
-        plan = llm_client.generate_search_plan(query)
-        print(f"📋 Plan généré:")
-        for i, search_query in enumerate(plan.get("requetes_recherche", []), 1):
-            print(f"  {i}. {search_query}")
-        print(f"🎲 Stratégie: {plan.get('strategie', 'N/A')}")
-    
-    return True
-
-def test_fallback_results():
-    """Test des résultats de fallback"""
-    print("\n🧪 Test des résultats de fallback")
+def test_search_only():
+    """Test uniquement la recherche web"""
+    print("🔍 Test de la recherche web uniquement")
     print("=" * 50)
     
     search_api = SearchAPI()
+    query = "intelligence artificielle"
     
-    # Tester différents types de requêtes
-    queries = [
-        "intelligence artificielle",  # Tech
-        "mal de tête",               # Santé  
-        "découverte scientifique",   # Science
-        "recette cuisine"            # Général
-    ]
+    print(f"Recherche pour: {query}")
+    results = search_api.search_web(query, 5)
     
-    for query in queries:
-        print(f"\n🔍 Fallback pour: {query}")
-        results = search_api.create_fallback_results(query)
-        print(f"📋 {len(results)} résultats de fallback:")
-        for i, result in enumerate(results, 1):
-            print(f"  {i}. {result['title']}")
-            print(f"     URL: {result['url']}")
-            print(f"     Type: {result['source']}")
+    print(f"\n✅ {len(results)} résultats trouvés:")
+    for i, result in enumerate(results, 1):
+        print(f"{i}. {result['title'][:60]}...")
+        print(f"   Source: {result['source']}")
+        print(f"   URL: {result['url']}")
+        print()
+    
+    return len(results) > 0
+
+def test_llm_plan():
+    """Test de génération de plan (avec gestion du rate limit)"""
+    print("📋 Test de génération de plan")
+    print("=" * 50)
+    
+    llm_client = MistralLLMClient()
+    query = "intelligence artificielle"
+    
+    print(f"Génération de plan pour: {query}")
+    plan = llm_client.generate_deep_search_plan(query)
+    
+    print(f"\n✅ Plan généré:")
+    print(f"Stratégie: {plan['strategie']}")
+    print(f"Requêtes: {plan['requetes_recherche']}")
     
     return True
 
-def test_search_without_scraping():
-    """Test de recherche sans scraping pour voir si les moteurs fonctionnent"""
-    print("\n🧪 Test de recherche (sans scraping)")
+def test_synthesis():
+    """Test de synthèse simple"""
+    print("✍️ Test de synthèse")
     print("=" * 50)
     
-    search_api = SearchAPI()
+    llm_client = MistralLLMClient()
     
-    # Test avec différents moteurs
-    engines_to_test = ["SerpApi", "SearXNG"]
-    query = "python programming"
+    # Données de test
+    fake_results = [
+        {
+            'title': 'Intelligence artificielle - Définition',
+            'snippet': 'L\'intelligence artificielle est une technologie...',
+            'url': 'https://example.com/ia'
+        }
+    ]
     
-    for engine in engines_to_test:
-        print(f"\n🔍 Test moteur: {engine}")
-        results = search_api.search_web(query, max_results=3, enabled_engines=[engine])
-        print(f"✅ {len(results)} résultats trouvés:")
-        for i, result in enumerate(results, 1):
-            print(f"  {i}. {result['title'][:60]}...")
-            print(f"     Source: {result['source']}")
-            print(f"     URL valide: {result['url'].startswith('http')}")
+    query = "intelligence artificielle"
+    synthesis = llm_client.synthesize_results(query, fake_results, [])
+    
+    print(f"\n✅ Synthèse générée:")
+    print(synthesis[:200] + "..." if len(synthesis) > 200 else synthesis)
+    
+    return True
 
 def main():
     """Test principal"""
-    print("🚀 DIAGNOSTIC AGENT DE RECHERCHE")
+    print("🤖 Test Simple de l'Agent de Recherche")
     print("=" * 60)
     
-    try:
-        # Test 1: Plans de recherche
-        test_plan_generation()
-        
-        # Test 2: Fallback
-        test_fallback_results()
-        
-        # Test 3: Recherche de base
-        test_search_without_scraping()
-        
-        print("\n✅ Tous les tests terminés")
-        
-    except Exception as e:
-        print(f"\n❌ Erreur dans les tests: {e}")
-        import traceback
-        traceback.print_exc()
+    tests = [
+        ("Recherche Web", test_search_only),
+        ("Génération de Plan", test_llm_plan),
+        ("Synthèse", test_synthesis)
+    ]
+    
+    results = {}
+    
+    for test_name, test_func in tests:
+        try:
+            print(f"\n🚀 {test_name}...")
+            success = test_func()
+            results[test_name] = success
+            print(f"{'✅ SUCCÈS' if success else '❌ ÉCHEC'}")
+            
+            # Pause entre les tests pour éviter le rate limiting
+            if test_name != tests[-1][0]:  # Pas de pause après le dernier test
+                print("⏳ Pause de 3 secondes...")
+                time.sleep(3)
+                
+        except Exception as e:
+            print(f"❌ ERREUR: {e}")
+            results[test_name] = False
+    
+    # Résumé
+    print("\n" + "=" * 60)
+    print("📊 RÉSUMÉ DES TESTS")
+    print("=" * 60)
+    
+    for test_name, success in results.items():
+        status = "✅ SUCCÈS" if success else "❌ ÉCHEC"
+        print(f"{test_name}: {status}")
+    
+    success_count = sum(results.values())
+    total_count = len(results)
+    
+    print(f"\n🎯 Résultat global: {success_count}/{total_count} tests réussis")
+    
+    if success_count == total_count:
+        print("🎉 Tous les tests sont passés ! L'agent fonctionne correctement.")
+    elif success_count > 0:
+        print("⚠️ Certains tests ont échoué, mais l'agent fonctionne partiellement.")
+    else:
+        print("❌ Tous les tests ont échoué. Vérifiez la configuration.")
 
 if __name__ == "__main__":
     main() 

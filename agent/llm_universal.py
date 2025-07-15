@@ -5,7 +5,23 @@ import logging
 from typing import List, Dict, Optional
 from config import Config
 
+# Couleurs pour les logs
+try:
+    from colorama import init, Fore, Back, Style
+    init(autoreset=True)
+    COLORS_AVAILABLE = True
+except ImportError:
+    COLORS_AVAILABLE = False
+    Fore = Back = Style = type('', (), {'__getattr__': lambda self, name: ''})()
+
 logger = logging.getLogger(__name__)
+
+def colored_log(level, message, color=None):
+    """Log avec couleur si disponible"""
+    if COLORS_AVAILABLE and color:
+        print(f"{color}{message}{Style.RESET_ALL}")
+    else:
+        getattr(logger, level)(message)
 
 class UniversalLLMClient:
     """Client LLM universel supportant Mistral, Groq et Ollama"""
@@ -23,6 +39,11 @@ class UniversalLLMClient:
                 from mistralai.models.chat_completion import ChatMessage
                 self.client = MistralClient(api_key=self.config.MISTRAL_API_KEY)
                 self.ChatMessage = ChatMessage
+                # Headers pour les requêtes directes
+                self.mistral_headers = {
+                    "Authorization": f"Bearer {self.config.MISTRAL_API_KEY}",
+                    "Content-Type": "application/json"
+                }
                 logger.info(f"🤖 Client Mistral initialisé avec {self.config.MISTRAL_MODEL}")
             except Exception as e:
                 logger.error(f"❌ Erreur initialisation Mistral: {e}")
@@ -40,6 +61,18 @@ class UniversalLLMClient:
             self._init_groq()
             
         logger.info(f"🤖 Client LLM initialisé: {self.provider}")
+    
+    def _init_groq(self):
+        """Initialise Groq avec les headers nécessaires"""
+        if not self.config.GROQ_API_KEY:
+            logger.error("❌ Clé API Groq manquante")
+            return
+        
+        self.groq_headers = {
+            "Authorization": f"Bearer {self.config.GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        logger.info("🤖 Headers Groq initialisés")
     
     def _wait_for_rate_limit(self):
         """Attend avant la prochaine requête (délai réduit)"""
@@ -180,8 +213,8 @@ class UniversalLLMClient:
             logger.error(f"❌ Provider non supporté: {self.provider}")
             return None
     
-    def generate_search_plan(self, user_query: str) -> Dict:
-        """Génère un plan de recherche standard"""
+    def generate_search_plan_legacy(self, user_query: str) -> Dict:
+        """Génère un plan de recherche standard (OBSOLÈTE - utiliser generate_deep_search_plan)"""
         
         # Plan simple sans LLM si la requête est courte (gain de temps)
         if len(user_query.split()) <= 3:
@@ -235,52 +268,190 @@ intelligence artificielle définition, IA avantages inconvénients, intelligence
             "strategie": "Plan automatique"
         }
     
+    def generate_search_plan(self, user_query: str) -> Dict:
+        """Méthode de compatibilité - redirige vers generate_deep_search_plan"""
+        logger.info("🔄 Redirection vers plan intelligent")
+        return self.generate_deep_search_plan(user_query)
+    
     def generate_deep_search_plan(self, user_query: str) -> Dict:
-        """Génère un plan de recherche approfondi"""
+        """Génère un plan de recherche intelligent avec analyse JSON"""
         
-        prompt = f"""Crée un plan de recherche approfondi pour: "{user_query}"
+        prompt = f"""Génère un plan de recherche web intelligent pour la question suivante : "{user_query}"
 
-Génère 5-6 requêtes variées:
-- Général
-- Avantages/inconvénients  
-- Tendances 2024
-- Experts/études
-- Applications pratiques
+Analyse d'abord la question pour comprendre ce que l'utilisateur demande vraiment, puis crée un plan structuré.
 
-Réponds UNIQUEMENT avec les requêtes séparées par des virgules.
+Retourne le résultat au format JSON strict avec les champs suivants :
+- "analyse": une phrase décrivant ce que l'utilisateur cherche vraiment
+- "plan": une liste de 3-4 étapes logiques de recherche  
+- "requetes_recherche": une liste de 5-6 requêtes Google précises et pertinentes (en français)
+- "questions_secondaires": une liste de 2-3 questions secondaires importantes
+- "strategie": description de l'approche utilisée
 
-Exemple pour "intelligence artificielle":
-intelligence artificielle définition, IA avantages inconvénients, intelligence artificielle 2024, IA experts avis, intelligence artificielle applications pratiques"""
+Exemples de questions et leurs analyses :
 
-        content = self.generate_completion(prompt, max_tokens=200)
+Pour "qui est le plus riche entre elon musk et françois hollande" :
+{{"analyse": "Comparaison de patrimoine entre un milliardaire américain et un ex-président français", "plan": ["Rechercher fortune actuelle Elon Musk", "Rechercher patrimoine François Hollande", "Comparer les montants", "Analyser les sources de richesse"], "requetes_recherche": ["Elon Musk fortune 2024 milliards", "François Hollande patrimoine net worth", "richest people 2024 Musk classement", "patrimoine président France Hollande", "Tesla SpaceX valeur Musk fortune", "salaire président France vs milliardaires"], "questions_secondaires": ["Quelles sont leurs sources de revenus principales ?", "Comment se situe Hollande par rapport aux autres politiques ?", "Évolution fortune Musk dernières années ?"], "strategie": "Recherche comparative de données financières publiques"}}
+
+Pour "comment dresser un chien agressif" :
+{{"analyse": "Techniques d'éducation canine pour corriger comportements agressifs", "plan": ["Identifier causes agressivité", "Techniques de dressage spécialisées", "Conseils vétérinaires/experts", "Témoignages propriétaires"], "requetes_recherche": ["chien agressif dressage techniques", "éducateur canin agression solutions", "vétérinaire comportementaliste chien", "socialisation chien adulte agressif", "méthodes éducation positive chien", "chien mord que faire conseils"], "questions_secondaires": ["Quand consulter un professionnel ?", "Quels sont les signes précurseurs ?", "Peut-on éviter l'agressivité ?"], "strategie": "Approche multi-expertise (vétérinaire, éducation, comportement)"}}
+
+Réponds UNIQUEMENT avec le JSON valide, sans texte additionnel."""
+
+        # Forcer le format JSON si le provider le supporte
+        if self.provider == "mistral":
+            content = self._make_request_mistral_json(prompt, max_tokens=800)
+        else:
+            content = self.generate_completion(prompt, max_tokens=800)
         
         if content:
-            queries = [q.strip() for q in content.split(',') if q.strip()]
+            try:
+                # Nettoyer le contenu pour extraire le JSON
+                content = content.strip()
+                if content.startswith('```json'):
+                    content = content[7:-3]
+                elif content.startswith('```'):
+                    content = content[3:-3]
+                
+                import json
+                plan_data = json.loads(content)
+                
+                # Validation des champs requis
+                required_fields = ["analyse", "plan", "requetes_recherche", "questions_secondaires", "strategie"]
+                if all(field in plan_data for field in required_fields):
+                    # Limiter le nombre de requêtes
+                    plan_data["requetes_recherche"] = plan_data["requetes_recherche"][:6]
+                    
+                    # Affichage détaillé du plan dans la console avec couleurs
+                    colored_log("info", "📋 ========= PLAN DE RECHERCHE INTELLIGENT =========", Fore.CYAN + Style.BRIGHT)
+                    colored_log("info", f"🎯 ANALYSE: {plan_data['analyse']}", Fore.YELLOW + Style.BRIGHT)
+                    colored_log("info", "📊 ÉTAPES DU PLAN:", Fore.GREEN + Style.BRIGHT)
+                    for i, etape in enumerate(plan_data['plan'], 1):
+                        colored_log("info", f"   {i}. {etape}", Fore.GREEN)
+                    colored_log("info", "🔍 REQUÊTES DE RECHERCHE:", Fore.BLUE + Style.BRIGHT)
+                    for i, query in enumerate(plan_data['requetes_recherche'], 1):
+                        colored_log("info", f"   {i}. '{query}'", Fore.BLUE)
+                    colored_log("info", "❓ QUESTIONS SECONDAIRES:", Fore.MAGENTA + Style.BRIGHT)
+                    for question in plan_data['questions_secondaires']:
+                        colored_log("info", f"   • {question}", Fore.MAGENTA)
+                    colored_log("info", f"🎲 STRATÉGIE: {plan_data['strategie']}", Fore.WHITE + Style.BRIGHT)
+                    colored_log("info", "=" * 55, Fore.CYAN + Style.BRIGHT)
+                    
+                    return {
+                        "requetes_recherche": plan_data["requetes_recherche"],
+                        "types_sources": ["données officielles", "sites spécialisés", "études", "articles de référence"],
+                        "questions_secondaires": plan_data["questions_secondaires"],
+                        "strategie": f"Plan intelligent: {plan_data['strategie']}",
+                        "analyse": plan_data["analyse"],
+                        "plan_etapes": plan_data["plan"]
+                    }
+                    
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"⚠️ Erreur parsing JSON plan: {e}")
+        
+        # Fallback intelligent basé sur l'analyse de la question
+        logger.info("📋 Plan de fallback intelligent")
+        return self._generate_smart_fallback_plan(user_query)
+    
+    def _make_request_mistral_json(self, prompt: str, max_tokens: int = 800) -> Optional[str]:
+        """Requête Mistral avec format JSON forcé"""
+        if not self.config.MISTRAL_API_KEY:
+            return None
             
-            if len(queries) >= 3:
-                logger.info(f"📋 Plan approfondi généré avec {len(queries)} requêtes")
+        try:
+            self._wait_for_rate_limit()
+            
+            payload = {
+                "model": self.config.MISTRAL_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": self.config.TEMPERATURE,
+                "response_format": {"type": "json_object"}
+            }
+            
+            logger.info("🤖 Requête Mistral JSON")
+            response = requests.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers=self.mistral_headers,
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result["choices"][0]["message"]["content"]
+                logger.info("✅ Requête Mistral JSON réussie")
+                return content
+            elif response.status_code == 429:
+                logger.warning("⚠️ Rate limit Mistral, attente...")
+                time.sleep(5)
+                return None
+            else:
+                logger.warning(f"⚠️ Erreur Mistral JSON: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"❌ Erreur requête Mistral JSON: {e}")
+            return None
+    
+    def _generate_smart_fallback_plan(self, user_query: str) -> Dict:
+        """Génère un plan de fallback intelligent basé sur l'analyse de mots-clés"""
+        query_lower = user_query.lower()
+        
+        # Détection du type de question
+        if any(word in query_lower for word in ["qui est", "plus riche", "fortune", "patrimoine", "richesse"]):
+            # Question de comparaison financière
+            base_terms = ["fortune", "patrimoine", "richesse", "net worth"]
+            if "musk" in query_lower and "hollande" in query_lower:
                 return {
-                    "requetes_recherche": queries[:6],
-                    "types_sources": ["articles spécialisés", "études", "sites d'actualité", "blogs experts"],
-                    "questions_secondaires": ["Quels sont les enjeux ?", "Quelles perspectives ?"],
-                    "strategie": f"Plan approfondi généré par {self.provider.upper()}"
+                    "requetes_recherche": [
+                        "Elon Musk fortune 2024 milliards",
+                        "François Hollande patrimoine déclaration",
+                        "richest people world 2024 Forbes",
+                        "président France salaire patrimoine",
+                        "Tesla SpaceX valeur Musk",
+                        "comparaison fortune politiques milliardaires"
+                    ],
+                    "types_sources": ["Forbes", "sites financiers", "déclarations officielles"],
+                    "questions_secondaires": ["Sources de revenus de chacun ?", "Évolution dans le temps ?"],
+                    "strategie": "Fallback intelligent: comparaison financière",
+                    "analyse": "Comparaison de patrimoine entre personnalités publiques",
+                    "plan_etapes": ["Recherche fortune Musk", "Recherche patrimoine Hollande", "Comparaison", "Contexte"]
                 }
         
-        # Fallback approfondi
-        logger.info("📋 Plan approfondi automatique")
+        elif any(word in query_lower for word in ["comment", "dresser", "éduquer", "apprendre"]):
+            # Question pratique/tutoriel
+            return {
+                "requetes_recherche": [
+                    f"{user_query} guide",
+                    f"{user_query} conseils experts",
+                    f"{user_query} méthode étapes",
+                    f"{user_query} erreurs éviter",
+                    f"{user_query} témoignages",
+                    f"{user_query} 2024 techniques"
+                ],
+                "types_sources": ["guides pratiques", "sites spécialisés", "forums"],
+                "questions_secondaires": ["Quelles erreurs éviter ?", "Combien de temps ça prend ?"],
+                "strategie": "Fallback intelligent: guide pratique",
+                "analyse": "Recherche de conseils et méthodes pratiques",
+                "plan_etapes": ["Méthodes de base", "Conseils experts", "Témoignages", "Erreurs courantes"]
+            }
+        
+        # Fallback général
         base_query = user_query.strip()
         return {
             "requetes_recherche": [
                 base_query,
-                f"{base_query} avantages",
-                f"{base_query} inconvénients", 
-                f"{base_query} 2024",
-                f"{base_query} tendances",
-                f"{base_query} experts"
+                f"{base_query} guide complet",
+                f"{base_query} conseils experts",
+                f"{base_query} 2024 actualités",
+                f"{base_query} avantages inconvénients",
+                f"{base_query} témoignages avis"
             ],
-            "types_sources": ["articles", "études", "blogs"],
-            "questions_secondaires": ["Quels sont les aspects ?"],
-            "strategie": "Plan approfondi automatique"
+            "types_sources": ["articles de référence", "sites spécialisés"],
+            "questions_secondaires": ["Quels sont les points clés ?", "Quelles sont les tendances ?"],
+            "strategie": "Fallback général intelligent",
+            "analyse": f"Recherche d'informations complètes sur: {base_query}",
+            "plan_etapes": ["Informations générales", "Avis experts", "Actualités", "Retours utilisateurs"]
         }
     
     def synthesize_results(self, query: str, search_results: List[Dict], scraped_articles: List[Dict]) -> str:

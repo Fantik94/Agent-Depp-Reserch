@@ -8,4 +8,5 @@ beautifulsoup4==4.12.2
 lxml==4.9.3
 pandas==2.0.3
 aiohttp==3.8.6
-requests-html==0.10.0 
+requests-html==0.10.0
+colorama==0.4.6 
