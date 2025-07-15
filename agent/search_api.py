@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 class SearchAPI:
     """API de recherche utilisant SerpApi et des méthodes alternatives"""
     
-    def __init__(self):
+    def __init__(self, search_engines: Optional[List[str]] = None):
         self.config = Config()
+        self.search_engines = search_engines or ["SerpApi", "Smart-Search"]
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -192,7 +193,7 @@ class SearchAPI:
             max_results = self.config.MAX_SEARCH_RESULTS
         
         if enabled_engines is None:
-            enabled_engines = ["SerpApi", "SearXNG", "Serper", "Smart-Search"]
+            enabled_engines = self.search_engines
         
         logger.info(f"🚀 Début recherche pour: '{query}'")
         
