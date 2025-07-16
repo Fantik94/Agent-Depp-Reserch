@@ -6,16 +6,13 @@ from serpapi_module import google_search
 from scraping_module import scrap_url
 
 # Streamlit
-st.set_page_config(page_title="Agent deep research", page_icon="🤖")
+st.set_page_config(page_title="Agent deep research")
 st.title("Agent deep research")
-
-serpapi_key = os.environ.get("SERPAPI_API_KEY")
 
 prompt = st.text_input("Entrez votre question ou sujet de recherche :")
 
 if st.button("Générer le plan et scrapper le web"):
-    # Affichage du loader global tant que le résumé n'est pas prêt
-    with st.spinner("Recherche, scraping et synthèse en cours..."):
+    with st.spinner("Recherche en cours..."):
         plan_data = generateText(prompt)
         if "raw" in plan_data:
             keywords = [prompt]
@@ -31,9 +28,9 @@ if st.button("Générer le plan et scrapper le web"):
             global_resume = resumeText("\n\n".join(all_contents))
         else:
             global_resume = "Aucun contenu à résumer."
-    # Résultat final affiché en haut
-    st.markdown(f"## 📝 Résumé global simplifié :\n{global_resume}")
-    # Détails dans un menu déroulant
+    
+    st.markdown(f"## Résumé global simplifié :\n{global_resume}")
+    
     with st.expander("Voir le détail de la recherche et des sources"):
         if "raw" in plan_data:
             st.subheader("Plan généré (format brut) :")

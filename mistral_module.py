@@ -27,11 +27,9 @@ def generateText(prompt: str) -> dict:
         ],
         response_format={"type": "json_object"}
     )
-    # On tente de parser la réponse en JSON
     try:
         return json.loads(chat_response.choices[0].message.content)
     except Exception:
-        # Si le format n'est pas respecté, on retourne le texte brut dans un champ 'raw'
         return {"raw": chat_response.choices[0].message.content}
 
 def resumeText(text: str) -> str:
