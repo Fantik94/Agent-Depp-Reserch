@@ -8,7 +8,7 @@ api_key = os.environ["MISTRAL_API_KEY"]
 model = "mistral-small-latest"
 client = Mistral(api_key=api_key)
 
-def generateText(prompt: str) -> dict:
+def generateText(prompt: str, nb_results: int) -> dict:
     chat_response = client.chat.complete(
         model=model,
         messages=[
@@ -16,6 +16,7 @@ def generateText(prompt: str) -> dict:
                 "role": "user",
                 "content": (
                     f"Génère un plan de recherche web pour la question suivante : {prompt}. "
+                    f"Prévois d'exploiter environ {nb_results} sources issues de Google. "
                     "Retourne le résultat au format JSON avec les champs suivants : "
                     'plan : une liste structurée des étapes de recherche, '
                     'keywords : une liste de mots-clés ou requêtes Google pertinentes (en français), '
