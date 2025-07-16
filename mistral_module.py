@@ -33,14 +33,14 @@ def generateText(prompt: str, nb_results: int) -> dict:
     except Exception:
         return {"raw": chat_response.choices[0].message.content}
 
-def resumeText(text: str) -> str:
+def resumeText(text: str, question: str) -> str:
     chat_response = client.chat.complete(
         model=model,
         messages=[
             {
                 "role": "user",
                 "content": (
-                    "Résume le texte suivant en français de façon simple et concise, en 5 phrases maximum :\n" + text
+                    f"En te basant sur la question suivante : '{question}', résume le texte ci-dessous de façon simple, concise et directement orientée pour répondre à la question. Limite-toi à 5 phrases maximum.\n\nTexte à résumer :\n{text}"
                 ),
             },
         ]

@@ -16,6 +16,6 @@ def google_search(query):
     }
     search = GoogleSearch(params)
     results = search.get_dict()
-    print("[DEBUG] Résultat SerpAPI:", results)
+    #print("[DEBUG] Résultat SerpAPI:", results)
     links = [r['link'] for r in results.get('organic_results', [])]
     return links 
