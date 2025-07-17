@@ -17,19 +17,49 @@ hr {margin: 1.5em 0;}
 
 st.markdown('<div class="big-title">Agent Deep Research</div>', unsafe_allow_html=True)
 
-# Curseur stylisé
 nb_results = st.slider("Nombre de résultats Google à analyser", min_value=1, max_value=10, value=3)
-
 prompt = st.text_input("Entrez votre question ou sujet de recherche :")
 
-if st.button("Rechercher"):
-    with st.spinner("Recherche, scraping et synthèse en cours..."):
-        plan_data = generateText(prompt, nb_results)
-        if "raw" in plan_data:
-            keywords = [prompt]
-        else:
-            keywords = plan_data.get("keywords", [prompt])
-        search_query = keywords[0] if keywords else prompt
+# Initialisation de l'état
+if 'plan_data' not in st.session_state:
+    st.session_state.plan_data = None
+if 'plan_validated' not in st.session_state:
+    st.session_state.plan_validated = False
+if 'nb_results' not in st.session_state:
+    st.session_state.nb_results = nb_results
+if 'prompt' not in st.session_state:
+    st.session_state.prompt = prompt
+
+if st.button("Générer un plan de recherche"):
+    with st.spinner("Génération du plan en cours..."):
+        st.session_state.plan_data = generateText(prompt, nb_results)
+        st.session_state.plan_validated = False
+        st.session_state.nb_results = nb_results
+        st.session_state.prompt = prompt
+
+if st.session_state.plan_data:
+    plan_data = st.session_state.plan_data
+    st.markdown('<h4 style="color:#3B82F6;">Plan généré</h4>', unsafe_allow_html=True)
+    if "raw" in plan_data:
+        st.write(plan_data["raw"])
+        st.warning("Le format JSON n'a pas été respecté. Veuillez reformuler la question ou améliorer le prompt.")
+    else:
+        st.write(plan_data.get("plan", []))
+        st.markdown('<h4 style="color:#3B82F6;">Mots-clés proposés</h4>', unsafe_allow_html=True)
+        st.write(plan_data.get("keywords", []))
+    col1, col2 = st.columns(2)
+    if st.button("Valider ce plan et lancer le scraping"):
+        st.session_state.plan_validated = True
+
+
+if st.session_state.plan_validated and st.session_state.plan_data:
+    plan_data = st.session_state.plan_data
+    if "raw" in plan_data:
+        keywords = [prompt]
+    else:
+        keywords = plan_data.get("keywords", [prompt])
+    search_query = keywords[0] if keywords else prompt
+    with st.spinner("Scraping et synthèse en cours..."):
         links = google_search(search_query)
         all_contents = []
         for link in links[:nb_results]:
@@ -39,7 +69,6 @@ if st.button("Rechercher"):
             global_resume = resumeText("\n\n".join(all_contents), prompt)
         else:
             global_resume = "Aucun contenu à résumer."
-
     st.markdown(
         f'''
         <div class="result-box">
@@ -49,20 +78,7 @@ if st.button("Rechercher"):
         ''',
         unsafe_allow_html=True
     )
-
     with st.expander("Voir le détail de la recherche"):
-        if "raw" in plan_data:
-            st.subheader("Plan généré (format brut)")
-            st.write(plan_data["raw"])
-            st.warning("Le format JSON n'a pas été respecté. Veuillez reformuler la question ou améliorer le prompt.")
-        else:
-            st.markdown('<h4 style="color:#3B82F6;">Plan généré</h4>', unsafe_allow_html=True)
-            st.write(plan_data.get("plan", []))
-            st.markdown('<h4 style="color:#3B82F6;">Mots-clés proposés</h4>', unsafe_allow_html=True)
-            st.write(plan_data.get("keywords", []))
-            st.markdown('<h4 style="color:#3B82F6;">Questions secondaires</h4>', unsafe_allow_html=True)
-            st.write(plan_data.get("questions_secondaires", []))
-        st.markdown('<hr>', unsafe_allow_html=True)
         st.markdown('<h4 style="color:#F59E42;">Liens trouvés et scrappés</h4>', unsafe_allow_html=True)
         for i, link in enumerate(links[:nb_results]):
             st.markdown(f"<b>Lien {i+1} :</b> <a href='{link}' target='_blank'>{link}</a>", unsafe_allow_html=True)

@@ -15,14 +15,13 @@ def generateText(prompt: str, nb_results: int) -> dict:
             {
                 "role": "user",
                 "content": (
-                    f"Génère un plan de recherche web pour la question suivante : {prompt}. "
-                    f"Prévois d'exploiter environ {nb_results} sources issues de Google. "
+                    f"Pour la question suivante : {prompt}, génère un plan de recherche web structuré "
+                    f"en exactement {nb_results} étapes, chaque étape correspondant à l'exploitation d'une source Google différente. "
                     "Retourne le résultat au format JSON avec les champs suivants : "
-                    'plan : une liste structurée des étapes de recherche, '
-                    'keywords : une liste de mots-clés ou requêtes Google pertinentes (en français), '
-                    'questions_secondaires : une liste de questions secondaires à explorer.\n'
+                    f'plan : une liste de {nb_results} étapes, '
+                    f'keywords : une liste de {nb_results} mots-clés ou requêtes Google pertinentes (en français).\n '
                     "Exemple de format attendu :\n"
-                    '{"plan": ["Étape 1...", "Étape 2..."], "keywords": ["mot-clé 1", "mot-clé 2"], "questions_secondaires": ["question 1", "question 2"]}'
+                    '{"plan": ["Étape 1...", "Étape 2..."], "keywords": ["mot-clé 1", "mot-clé 2"]}'
                 ),
             },
         ],
