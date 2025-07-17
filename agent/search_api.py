@@ -8,6 +8,13 @@ import time
 import random
 from smart_search import search_with_smart
 
+try:
+    from serpapi import GoogleSearch
+    SERPAPI_AVAILABLE = True
+except ImportError:
+    SERPAPI_AVAILABLE = False
+    logging.warning("⚠️ Package serpapi non disponible")
+
 logger = logging.getLogger(__name__)
 
 class SearchAPI:
@@ -59,6 +66,47 @@ class SearchAPI:
         
         return []
     
+    def search_serpapi_official(self, query: str, max_results: int = 10) -> List[Dict]:
+        if not SERPAPI_AVAILABLE:
+            logger.warning("⚠️ Package serpapi non disponible, utilisation de la méthode manuelle")
+            return self.search_serpapi_free(query, max_results)
+        
+        if not self.config.SERP_API_KEY:
+            logger.warning("⚠️ Pas de clé SerpApi configurée")
+            return []
+        
+        try:
+            logger.info(f"🔍 SerpApi officiel pour: {query}")
+            
+            # Utiliser l'approche de l'ami
+            params = {
+                "engine": "google",
+                "q": query,
+                "num": max_results,
+                "api_key": self.config.SERP_API_KEY
+            }
+            
+            search = GoogleSearch(params)
+            results_dict = search.get_dict()
+            
+            results = []
+            if 'organic_results' in results_dict:
+                for item in results_dict['organic_results'][:max_results]:
+                    results.append({
+                        'title': item.get('title', ''),
+                        'url': item.get('link', ''),
+                        'snippet': item.get('snippet', ''),
+                        'source': 'serpapi_official'
+                    })
+            
+            logger.info(f"✅ SerpApi officiel: {len(results)} résultats trouvés")
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur SerpApi officiel: {e}")
+            # Fallback vers la méthode manuelle
+            return self.search_serpapi_free(query, max_results)
+    
     def search_searxng(self, query: str, max_results: int = 10) -> List[Dict]:
         """Utilise une instance publique de SearXNG"""
         try:
@@ -99,14 +147,14 @@ class SearchAPI:
         return []
     
     def search_smart(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Recherche intelligente (Bing + sites spécialisés)"""
+        """Recherche Google ultra-optimisée avec anti-détection"""
         try:
-            logger.info(f"🧠 Recherche intelligente pour: {query}")
+            logger.info(f"🧠 Recherche Google ultra-optimisée pour: {query}")
             results = search_with_smart(query, max_results)
-            logger.info(f"✅ Recherche intelligente: {len(results)} résultats trouvés")
+            logger.info(f"✅ Recherche Google: {len(results)} résultats trouvés")
             return results
         except Exception as e:
-            logger.error(f"❌ Erreur recherche intelligente: {e}")
+            logger.error(f"❌ Erreur recherche Google: {e}")
             return []
     
     def search_serper(self, query: str, max_results: int = 10) -> List[Dict]:
@@ -216,7 +264,7 @@ class SearchAPI:
             engine_results = []
             
             if engine == "SerpApi":
-                engine_results = self.search_serpapi_free(clean_query, max_results)
+                engine_results = self.search_serpapi_official(clean_query, max_results)
             elif engine == "Serper" and self.config.SERPER_API_KEY:
                 engine_results = self.search_serper(clean_query, max_results)
             elif engine == "SearXNG":
