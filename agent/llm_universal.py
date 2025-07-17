@@ -35,10 +35,10 @@ class UniversalLLMClient:
         # Initialiser le client selon le provider
         if self.provider == "mistral":
             try:
-                from mistralai.client import MistralClient
-                from mistralai.models.chat_completion import ChatMessage
-                self.client = MistralClient(api_key=self.config.MISTRAL_API_KEY)
-                self.ChatMessage = ChatMessage
+                from mistralai import Mistral
+                from mistralai.models import UserMessage
+                self.client = Mistral(api_key=self.config.MISTRAL_API_KEY)
+                self.UserMessage = UserMessage
                 # Headers pour les requêtes directes
                 self.mistral_headers = {
                     "Authorization": f"Bearer {self.config.MISTRAL_API_KEY}",
@@ -171,17 +171,17 @@ class UniversalLLMClient:
         """Requête vers Mistral (avec rate limiting amélioré)"""
         try:
             # Vérifier que Mistral est bien configuré
-            if not hasattr(self, 'client') or not hasattr(self, 'ChatMessage'):
+            if not hasattr(self, 'client') or not hasattr(self, 'UserMessage'):
                 logger.error("❌ Client Mistral non initialisé")
                 return None
             
             # Délai plus long pour Mistral
             time.sleep(3)
             
-            messages = [self.ChatMessage(role="user", content=prompt)]
+            messages = [self.UserMessage(content=prompt)]
             
             logger.info("🤖 Requête Mistral")
-            response = self.client.chat(
+            response = self.client.chat.complete(
                 model=self.config.MISTRAL_MODEL,
                 messages=messages,
                 max_tokens=max_tokens,

@@ -1,5 +1,5 @@
-from mistralai.client import MistralClient
-from mistralai.models.chat_completion import ChatMessage
+from mistralai import Mistral
+from mistralai.models import UserMessage
 from typing import List, Dict
 import logging
 from config import Config
@@ -15,7 +15,7 @@ class MistralLLMClient:
     
     def __init__(self):
         self.config = Config()
-        self.client = MistralClient(api_key=self.config.MISTRAL_API_KEY)
+        self.client = Mistral(api_key=self.config.MISTRAL_API_KEY)
         self.last_request_time = 0
         self.min_delay = 5  # Délai minimum entre requêtes (secondes) - augmenté pour Mistral
     
@@ -31,7 +31,7 @@ class MistralLLMClient:
         
         self.last_request_time = time.time()
     
-    def _make_request_with_retry(self, messages: List[ChatMessage], max_tokens: int = 500, temperature: float = 0.3, max_retries: int = 3):
+    def _make_request_with_retry(self, messages: List[UserMessage], max_tokens: int = 500, temperature: float = 0.3, max_retries: int = 3):
         """Effectue une requête avec retry automatique en cas d'erreur 429"""
         
         for attempt in range(max_retries):
@@ -40,7 +40,7 @@ class MistralLLMClient:
                 
                 logger.info(f"🤖 Requête Mistral (tentative {attempt + 1}/{max_retries})")
                 
-                response = self.client.chat(
+                response = self.client.chat.complete(
                     model=self.config.MISTRAL_MODEL,
                     messages=messages,
                     max_tokens=max_tokens,
@@ -86,7 +86,7 @@ Exemple pour "intelligence artificielle":
 intelligence artificielle définition, IA avantages inconvénients, intelligence artificielle applications 2024, IA éthique risques, intelligence artificielle emploi impact, IA experts opinions, intelligence artificielle futur tendances"""
 
         content = self._make_request_with_retry(
-            [ChatMessage(role="user", content=prompt)],
+            [UserMessage(content=prompt)],
             max_tokens=200,
             temperature=0.5
         )
@@ -150,7 +150,7 @@ Exemple pour "intelligence artificielle":
 intelligence artificielle définition, IA avantages inconvénients, intelligence artificielle applications"""
 
         content = self._make_request_with_retry(
-            [ChatMessage(role="user", content=prompt)],
+            [UserMessage(content=prompt)],
             max_tokens=150,
             temperature=0.3
         )
@@ -223,7 +223,7 @@ Cela peut être dû à :
 Fais une synthèse en français, courte et claire."""
 
         content = self._make_request_with_retry(
-            [ChatMessage(role="user", content=prompt)],
+            [UserMessage(content=prompt)],
             max_tokens=800,
             temperature=0.5
         )
