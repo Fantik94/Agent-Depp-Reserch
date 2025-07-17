@@ -164,7 +164,7 @@ class SmartSearch:
                 title_text = page_title.get_text().lower()
                 if any(word in title_text for word in ['captcha', 'robot', 'unusual traffic', 'verify']):
                     logger.warning(f"⚠️ Google anti-bot détecté: {title_text}")
-                    return []
+                return []
             
             # Sélecteurs CSS mis à jour pour 2024/2025
             selectors_to_try = [
@@ -259,16 +259,16 @@ class SmartSearch:
                             'youtube.com', 'gmail.com', 'maps.google', 
                             'translate.google', 'support.google'
                         ]):
-                            results.append({
-                                'title': title,
-                                'url': url,
-                                'snippet': snippet,
+                                results.append({
+                                    'title': title,
+                                    'url': url,
+                                    'snippet': snippet,
                                 'source': 'google_advanced'
                             })
                             
-                            if len(results) >= max_results:
+                        if len(results) >= max_results:
                                 break
-                                
+                            
                 except Exception as e:
                     logger.debug(f"Erreur parsing résultat: {e}")
                     continue

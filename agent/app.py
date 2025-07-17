@@ -213,9 +213,15 @@ def display_search_interface():
     """Affiche l'interface de recherche"""
     st.markdown('<div class="search-box">', unsafe_allow_html=True)
     
-    # Input principal
+    # Input principal avec gestion de l'historique
+    default_query = ""
+    if 'selected_query' in st.session_state:
+        default_query = st.session_state.selected_query
+        del st.session_state.selected_query  # Nettoyer après utilisation
+    
     user_query = st.text_input(
         "🔍 Votre question de recherche :",
+        value=default_query,
         placeholder="Ex: Intelligence artificielle avantages et inconvénients",
         help="Posez une question claire et précise pour obtenir les meilleurs résultats"
     )
@@ -264,9 +270,9 @@ def display_search_interface():
             # Sélecteur de moteurs de recherche
             search_engines = st.multiselect(
                 "🔍 Moteurs de recherche",
-                ["SerpApi", "Serper", "SearXNG", "Smart-Search"],
-                default=["SerpApi", "Smart-Search"],
-                help="Smart-Search = Bing + sites spécialisés selon le thème (animaux, tech, santé...)"
+                ["SerpApi"],
+                default=["SerpApi"],
+                help="SerpApi = Google Search via API officielle (fiable et rapide)"
             )
             
             # Méthode de scraping
@@ -276,6 +282,53 @@ def display_search_interface():
                 index=2,  # Both par défaut
                 help="Newspaper: Plus rapide | BeautifulSoup: Plus robuste | Both: Les deux"
             )
+    
+    # Configuration avancée avec presets intelligents
+    st.markdown("### ⚙️ Configuration avancée")
+    
+    # Utiliser les presets de la sidebar si disponibles
+    if 'preset_config' in st.session_state:
+        preset = st.session_state.preset_config
+        default_results = preset['max_results']
+        default_articles = preset['max_articles']
+        default_queries = preset['max_queries']
+        st.info(f"🎯 Configuration optimisée activée: {default_results} résultats, {default_articles} articles, {default_queries} requêtes")
+    else:
+        default_results = 10
+        default_articles = 5
+        default_queries = 6
+    
+    col_results, col_queries, col_articles = st.columns(3)
+    
+    with col_results:
+        max_results = st.slider(
+            "🔢 Résultats par recherche",
+            min_value=3,
+            max_value=20,
+            value=default_results,
+            step=1,
+            help="Nombre de résultats à récupérer pour chaque requête de recherche"
+        )
+    
+    with col_queries:
+        max_queries = st.slider(
+            "📋 Requêtes dans le plan",
+            min_value=2,
+            max_value=10,
+            value=default_queries,
+            step=1,
+            help="Nombre maximum de requêtes générées dans le plan de recherche"
+        )
+    
+    with col_articles:
+        max_articles = st.slider(
+            "📰 Articles à analyser",
+            min_value=2,
+            max_value=15,
+            value=default_articles,
+            step=1,
+            help="Nombre d'articles à scraper et analyser en détail"
+        )
     
     # Boutons et options
     col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
@@ -305,7 +358,7 @@ def display_search_interface():
     
     st.markdown('</div>', unsafe_allow_html=True)
     
-    return user_query, search_button, show_logs, deep_search, max_articles, llm_provider, search_engines, scraping_method
+    return user_query, search_button, show_logs, deep_search, max_articles, llm_provider, search_engines, scraping_method, max_results, max_queries
 
 def add_search_log(message: str, level: str = "info"):
     """Ajoute un log à la liste des logs de recherche"""
@@ -450,7 +503,7 @@ class SearchProgressTracker:
         duration = self.get_duration(self.step_start_time)
         update_search_step(step_id, "error", title, details, duration)
 
-def research_with_progress_tracking(agent, query, deep_search=False, max_articles=5, search_engines=None, scraping_method="both"):
+def research_with_progress_tracking(agent, query, deep_search=False, max_articles=5, search_engines=None, scraping_method="both", max_results=10, max_queries=6):
     """Effectue la recherche avec suivi du progrès"""
     tracker = SearchProgressTracker()
     
@@ -467,23 +520,27 @@ def research_with_progress_tracking(agent, query, deep_search=False, max_article
         
         # Générer un plan intelligent (toujours approfondi maintenant)
         plan = agent.llm_client.generate_deep_search_plan(query)
-            
-        queries_count = len(plan.get("requetes_recherche", []))
+        
+        # Limiter le nombre de requêtes selon la configuration
+        all_queries = plan.get("requetes_recherche", [query])
+        limited_queries = all_queries[:max_queries]
+        
+        queries_count = len(limited_queries)
         mode_text = "approfondie" if deep_search else "standard"
-        tracker.complete_step("plan", "Plan généré", f"{queries_count} requêtes de recherche créées (mode {mode_text})")
+        tracker.complete_step("plan", "Plan généré", f"{queries_count} requêtes de recherche créées (mode {mode_text}, max={max_queries})")
         
         # Étape 2: Recherche web
         tracker.start_step("search", "Recherche web", f"Exécution de {queries_count} requêtes de recherche")
         all_search_results = []
         
-        for i, search_query in enumerate(plan.get("requetes_recherche", [query]), 1):
+        for i, search_query in enumerate(limited_queries, 1):
             # Vérifier si la recherche doit continuer
             if not st.session_state.get('search_running', True):
                 logger.info("🛑 Recherche interrompue pendant la recherche web")
                 return None
                 
             add_search_log(f"🔍 Requête {i}/{queries_count}: {search_query}")
-            results = agent.search_api.search_web(search_query, enabled_engines=search_engines)
+            results = agent.search_api.search_web(search_query, max_results=max_results, enabled_engines=search_engines)
             all_search_results.extend(results)
             
             # Mise à jour du progrès
@@ -651,53 +708,149 @@ def display_results(result):
         display_advanced_metrics(result)
 
 def display_sidebar():
-    """Affiche la barre latérale"""
+    """Affiche la sidebar simplifiée et efficace"""
     with st.sidebar:
-        st.markdown("## ⚙️ Configuration")
+        # 🚀 Header simple
+        st.markdown("""
+        <div style="text-align: center; padding: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; margin-bottom: 1rem;">
+            <h2 style="color: white; margin: 0;">⚙️ Contrôle</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 📊 STATUS DES APIS
+        st.markdown("### 📊 Status")
         
         config = Config()
-        st.write(f"**🤖 Modèle LLM :** {config.MISTRAL_MODEL}")
-        st.write(f"**🔍 Max résultats :** {config.MAX_SEARCH_RESULTS}")
-        st.write(f"**📰 Max articles :** {config.MAX_SCRAPED_ARTICLES}")
+        col1, col2 = st.columns(2)
         
-        # Status des API
-        st.markdown("### 🔌 Status des APIs")
+        with col1:
+            if config.SERP_API_KEY:
+                st.success("🟢 SerpApi")
+            else:
+                st.error("🔴 SerpApi")
         
-        # LLM APIs
-        if config.MISTRAL_API_KEY:
-            st.success("✅ Mistral AI")
+        with col2:
+            if config.MISTRAL_API_KEY:
+                st.success("🤖 Mistral")
+            else:
+                st.warning("⚠️ Mistral")
+        
+        # 📈 STATISTIQUES SESSION
+        if 'search_history' in st.session_state:
+            searches_count = len(st.session_state.search_history)
         else:
-            st.error("❌ Mistral AI")
+            searches_count = 0
         
-        # Moteurs de recherche
-        st.markdown("**🔍 Moteurs de recherche :**")
-        if config.SERP_API_KEY:
-            st.success("✅ SerpApi (clé personnelle)")
+        # Status actuel
+        if st.session_state.get('search_running', False):
+            status_text = "🔄 Recherche en cours..."
+            status_color = "#fff3cd"
+        elif st.session_state.get('last_result'):
+            status_text = "✅ Dernière recherche OK"
+            status_color = "#d4edda"
         else:
-            st.error("❌ SerpApi")
+            status_text = "💤 En attente"
+            status_color = "#e2e3e5"
         
-        if config.SERPER_API_KEY:
-            st.success("✅ Serper.dev")
-        else:
-            st.info("ℹ️ Serper.dev non configuré")
+        st.markdown(f"""
+        <div style="background: {status_color}; padding: 0.8rem; border-radius: 8px; margin: 1rem 0; text-align: center;">
+            <div style="font-weight: bold;">{status_text}</div>
+            <div style="font-size: 0.8rem; opacity: 0.8;">Session: {searches_count} recherches</div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        st.success("✅ SearXNG (gratuit)")
-        st.success("✅ Smart-Search (gratuit)")
-        st.info("🧠 Smart-Search = Bing + sites spécialisés (Wamiz, 30 Millions d'Amis, etc.)")
+        # 🔧 PRESETS RAPIDES
+        st.markdown("### 🔧 Configuration")
         
-        # Méthodes de scraping
-        st.markdown("**📰 Scraping disponible :**")
-        st.success("✅ Newspaper3k")
-        st.success("✅ BeautifulSoup")
+        col_preset1, col_preset2 = st.columns(2)
         
-        # Historique
-        st.markdown("### 📜 Historique")
-        if st.session_state.search_history:
-            for i, query in enumerate(reversed(st.session_state.search_history[-5:]), 1):
-                if st.button(f"{i}. {query[:25]}...", key=f"history_{i}"):
+        with col_preset1:
+            if st.button("🚀 Rapide", help="5 résultats, 3 articles", use_container_width=True):
+                st.session_state.preset_config = {
+                    'max_results': 5,
+                    'max_articles': 3,
+                    'max_queries': 3,
+                    'deep_search': False
+                }
+                st.success("✅ Mode Rapide")
+        
+        with col_preset2:
+            if st.button("🔬 Complet", help="15 résultats, 8 articles", use_container_width=True):
+                st.session_state.preset_config = {
+                    'max_results': 15,
+                    'max_articles': 8,
+                    'max_queries': 6,
+                    'deep_search': True
+                }
+                st.success("✅ Mode Complet")
+        
+        # Affichage config active
+        if 'preset_config' in st.session_state:
+            config = st.session_state.preset_config
+            st.info(f"📊 {config['max_results']} résultats | 📰 {config['max_articles']} articles")
+        
+        # 🗂️ HISTORIQUE
+        st.markdown("### 🗂️ Historique")
+        
+        if st.session_state.get('search_history'):
+            # Bouton nettoyer
+            if st.button("🗑️ Nettoyer", help="Supprimer l'historique"):
+                st.session_state.search_history = []
+                st.success("🧹 Nettoyé")
+                st.rerun()
+            
+            # Liste des recherches récentes
+            history = st.session_state.search_history
+            recent_searches = history[-8:] if len(history) > 8 else history
+            
+            for i, query in enumerate(reversed(recent_searches), 1):
+                # Icône selon le type
+                if any(word in query.lower() for word in ['prix', 'acheter', 'meilleur']):
+                    icon = "🛒"
+                elif any(word in query.lower() for word in ['actualité', 'news', '2024']):
+                    icon = "📰"
+                else:
+                    icon = "🔍"
+                
+                # Bouton pour relancer
+                query_short = query[:30] + "..." if len(query) > 30 else query
+                
+                if st.button(f"{icon} {query_short}", key=f"hist_{i}", help=f"Relancer: {query}"):
                     st.session_state.selected_query = query
+                    st.rerun()
         else:
-            st.write("Aucune recherche")
+            st.markdown("""
+            <div style="text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 8px; color: #6c757d;">
+                <div style="font-size: 1.5rem;">📭</div>
+                <div style="font-size: 0.9rem;">Aucune recherche</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # 📈 DERNIÈRE RECHERCHE (si disponible)
+        if st.session_state.get('last_result'):
+            st.markdown("### 📈 Dernière Recherche")
+            
+            result = st.session_state.last_result
+            stats = result.get('stats', {})
+            
+            # Métriques simples
+            col_stat1, col_stat2 = st.columns(2)
+            
+            with col_stat1:
+                st.metric("🔍 Sources", stats.get('search_results_count', 0))
+                st.metric("⏱️ Durée", stats.get('total_duration', 'N/A'))
+            
+            with col_stat2:
+                st.metric("📰 Articles", stats.get('scraped_articles_count', 0))
+                st.metric("🎯 Requêtes", stats.get('search_queries_used', 0))
+        
+        # Footer simple
+        st.markdown("---")
+        st.markdown("""
+        <div style="text-align: center; font-size: 0.7rem; color: #6c757d;">
+            Agent v2.0 - SerpApi & Mistral AI
+        </div>
+        """, unsafe_allow_html=True)
 
 def display_ranked_links(result):
     """Affiche les liens classés par pertinence avec détails"""
@@ -1258,7 +1411,7 @@ def main():
     display_sidebar()
     
     # Interface de recherche
-    user_query, search_button, show_logs, deep_search, max_articles, llm_provider, search_engines, scraping_method = display_search_interface()
+    user_query, search_button, show_logs, deep_search, max_articles, llm_provider, search_engines, scraping_method, max_results, max_queries = display_search_interface()
     
     # Afficher le progrès s'il y en a un
     if st.session_state.search_steps:
@@ -1337,7 +1490,9 @@ def main():
                     deep_search=deep_search, 
                     max_articles=max_articles,
                     search_engines=search_engines,
-                    scraping_method=scraping_method
+                    scraping_method=scraping_method,
+                    max_results=max_results,
+                    max_queries=max_queries
                 )
                 
                 # Vérifier si la recherche a été interrompue

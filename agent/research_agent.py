@@ -12,7 +12,7 @@ class ResearchAgent:
     
     def __init__(self, llm_provider: str = None, search_engines: List[str] = None, scraping_method: str = "both"):
         self.config = Config()
-        self.search_api = SearchAPI()
+        self.search_api = SearchAPI(search_engines=search_engines)
         self.scraper = WebScraper()
         self.llm_client = UniversalLLMClient(provider=llm_provider)
         self.search_engines = search_engines
@@ -32,7 +32,7 @@ class ResearchAgent:
         all_search_results = []
         
         for query in plan.get("requetes_recherche", [user_query]):
-            results = self.search_api.search_web(query)
+            results = self.search_api.search_web(query, enabled_engines=self.search_engines)
             all_search_results.extend(results)
             logger.info(f"  - '{query}': {len(results)} résultats")
         
