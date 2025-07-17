@@ -264,10 +264,10 @@ class SmartSearch:
                                     'url': url,
                                     'snippet': snippet,
                                 'source': 'google_advanced'
-                            })
+                                })
                             
-                        if len(results) >= max_results:
-                                break
+                                if len(results) >= max_results:
+                                    break
                             
                 except Exception as e:
                     logger.debug(f"Erreur parsing résultat: {e}")

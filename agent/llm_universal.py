@@ -454,6 +454,293 @@ Réponds UNIQUEMENT avec le JSON valide, sans texte additionnel."""
             "plan_etapes": ["Informations générales", "Avis experts", "Actualités", "Retours utilisateurs"]
         }
     
+    def generate_contextual_search_plan(self, context_prompt: str, context_result: Dict) -> Dict:
+        """Génère un plan de recherche enrichi avec le contexte précédent"""
+        
+        # Extraire des informations du contexte
+        original_query = context_result.get('query', '')
+        original_plan = context_result.get('plan', {})
+        
+        prompt = f"""Génère un plan de recherche contextuel intelligent basé sur ce contexte :
+
+{context_prompt}
+
+La nouvelle recherche doit être COMPLÉMENTAIRE et ENRICHIR les résultats précédents, pas les répéter.
+
+Retourne le résultat au format JSON strict avec les champs suivants :
+- "analyse": analyse de la question de suivi dans son contexte
+- "plan": liste de 3 étapes logiques pour cette recherche contextuelle
+- "requetes_recherche": liste de 4-5 requêtes Google SPÉCIFIQUES à la question de suivi (éviter de répéter les requêtes déjà faites)
+- "questions_secondaires": 2 questions secondaires pour approfondir
+- "strategie": description de l'approche contextuelle utilisée
+
+Exemple de réponse pour une question de suivi "Quels sont les risques ?" après une recherche sur "intelligence artificielle avantages" :
+{{"analyse": "L'utilisateur veut maintenant connaître les risques de l'IA après avoir vu les avantages", "plan": ["Identifier les risques principaux de l'IA", "Rechercher des cas concrets de problèmes", "Analyser les mesures de prévention"], "requetes_recherche": ["intelligence artificielle risques dangers", "IA biais algorithmes problèmes", "intelligence artificielle éthique limites", "AI safety sécurité risques", "intelligence artificielle emploi menaces"], "questions_secondaires": ["Comment minimiser ces risques ?", "Quels secteurs sont le plus à risque ?"], "strategie": "Recherche contextuelle ciblée sur les aspects négatifs pour compléter la vision précédente"}}
+
+Réponds UNIQUEMENT avec le JSON valide, sans texte additionnel."""
+
+        # Forcer le format JSON si le provider le supporte
+        if self.provider == "mistral":
+            content = self._make_request_mistral_json(prompt, max_tokens=800)
+        else:
+            content = self.generate_completion(prompt, max_tokens=800)
+        
+        if content:
+            try:
+                # Nettoyer le contenu pour extraire le JSON
+                content = content.strip()
+                if content.startswith('```json'):
+                    content = content[7:-3]
+                elif content.startswith('```'):
+                    content = content[3:-3]
+                
+                import json
+                plan_data = json.loads(content)
+                
+                # Validation des champs requis
+                required_fields = ["analyse", "plan", "requetes_recherche", "questions_secondaires", "strategie"]
+                if all(field in plan_data for field in required_fields):
+                    # Limiter le nombre de requêtes
+                    plan_data["requetes_recherche"] = plan_data["requetes_recherche"][:5]
+                    
+                    # Affichage du plan contextuel dans la console
+                    colored_log("info", "🔗 ========= PLAN DE RECHERCHE CONTEXTUEL =========", Fore.CYAN + Style.BRIGHT)
+                    colored_log("info", f"🎯 CONTEXTE: Basé sur \"{original_query}\"", Fore.YELLOW + Style.BRIGHT)
+                    colored_log("info", f"🧠 ANALYSE: {plan_data['analyse']}", Fore.YELLOW + Style.BRIGHT)
+                    colored_log("info", "📊 ÉTAPES CONTEXTUELLES:", Fore.GREEN + Style.BRIGHT)
+                    for i, etape in enumerate(plan_data['plan'], 1):
+                        colored_log("info", f"   {i}. {etape}", Fore.GREEN)
+                    colored_log("info", "🔍 NOUVELLES REQUÊTES:", Fore.BLUE + Style.BRIGHT)
+                    for i, query in enumerate(plan_data['requetes_recherche'], 1):
+                        colored_log("info", f"   {i}. '{query}'", Fore.BLUE)
+                    colored_log("info", f"🎲 STRATÉGIE CONTEXTUELLE: {plan_data['strategie']}", Fore.WHITE + Style.BRIGHT)
+                    colored_log("info", "=" * 55, Fore.CYAN + Style.BRIGHT)
+                    
+                    return {
+                        "requetes_recherche": plan_data["requetes_recherche"],
+                        "types_sources": ["sources complémentaires", "nouveaux points de vue", "analyses spécialisées"],
+                        "questions_secondaires": plan_data["questions_secondaires"],
+                        "strategie": f"Plan contextuel: {plan_data['strategie']}",
+                        "analyse": plan_data["analyse"],
+                        "plan_etapes": plan_data["plan"],
+                        "is_contextual": True
+                    }
+                    
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"⚠️ Erreur parsing JSON plan contextuel: {e}")
+        
+        # Fallback contextuel intelligent
+        logger.info("📋 Plan contextuel de fallback")
+        return self._generate_contextual_fallback_plan(context_prompt, context_result)
+
+    def _generate_contextual_fallback_plan(self, context_prompt: str, context_result: Dict) -> Dict:
+        """Génère un plan de fallback contextuel basé sur l'analyse de la question de suivi"""
+        
+        # Extraire la question de suivi du prompt
+        followup_query = ""
+        lines = context_prompt.split('\n')
+        for line in lines:
+            if line.startswith('Question de suivi:'):
+                followup_query = line.replace('Question de suivi:', '').strip().strip('"')
+                break
+        
+        query_lower = followup_query.lower()
+        original_query = context_result.get('query', '')
+        
+        # Prendre seulement les 2-3 premiers mots de la requête originale pour éviter les requêtes trop longues
+        base_terms = original_query.split()[:3]  
+        base_query = " ".join(base_terms)
+        
+        # Extraire les mots-clés principaux de la question de suivi
+        followup_keywords = []
+        words = followup_query.split()[:3]  # Limiter à 3 mots
+        for word in words:
+            if len(word) > 2 and word.lower() not in ['les', 'des', 'une', 'est', 'sont', 'avec', 'dans', 'pour']:
+                followup_keywords.append(word)
+        
+        # Générer des requêtes simples et efficaces
+        if any(word in query_lower for word in ["risque", "danger", "problème", "inconvénient"]):
+            # Question sur les risques - requêtes courtes et ciblées
+            return {
+                "requetes_recherche": [
+                    f"{base_query} risques",
+                    f"{base_query} dangers",
+                    f"{base_query} problèmes",
+                    f"{base_query} précautions"
+                ],
+                "types_sources": ["études sur les risques", "rapports de sécurité"],
+                "questions_secondaires": ["Comment minimiser les risques ?", "Dans quels cas éviter ?"],
+                "strategie": "Fallback contextuel: focus sur les aspects négatifs",
+                "analyse": f"Recherche des risques liés à {base_query}",
+                "plan_etapes": ["Identifier les risques", "Analyser les causes", "Trouver des solutions"],
+                "is_contextual": True
+            }
+        
+        elif any(word in query_lower for word in ["exemple", "cas", "concret", "pratique"]):
+            # Question sur des exemples pratiques
+            return {
+                "requetes_recherche": [
+                    f"{base_query} exemples",
+                    f"{base_query} cas pratiques",
+                    f"{base_query} témoignages",
+                    f"{base_query} expériences"
+                ],
+                "types_sources": ["témoignages", "études de cas"],
+                "questions_secondaires": ["Quels sont les résultats ?", "Combien de temps ?"],
+                "strategie": "Fallback contextuel: recherche d'exemples concrets",
+                "analyse": f"Recherche d'exemples pratiques pour {base_query}",
+                "plan_etapes": ["Trouver des cas concrets", "Analyser les résultats", "Identifier les facteurs"],
+                "is_contextual": True
+            }
+        
+        elif any(word in query_lower for word in ["alternative", "autre", "différent", "comparaison"]):
+            # Question sur les alternatives
+            return {
+                "requetes_recherche": [
+                    f"{base_query} alternatives",
+                    f"{base_query} options",
+                    f"{base_query} comparaison",
+                    f"alternative {base_query}"
+                ],
+                "types_sources": ["guides comparatifs", "analyses d'alternatives"],
+                "questions_secondaires": ["Quels critères choisir ?", "Quelle est la meilleure option ?"],
+                "strategie": "Fallback contextuel: recherche d'alternatives",
+                "analyse": f"Recherche d'alternatives à {base_query}",
+                "plan_etapes": ["Identifier alternatives", "Comparer options", "Évaluer critères"],
+                "is_contextual": True
+            }
+        
+        # Fallback général contextuel - requêtes très simples
+        main_keyword = followup_keywords[0] if followup_keywords else "informations"
+        
+        return {
+            "requetes_recherche": [
+                f"{base_query} {main_keyword}",
+                f"{main_keyword} {base_query}",
+                f"{base_query} guide",
+                f"{base_query} conseils"
+            ],
+            "types_sources": ["informations complémentaires", "guides pratiques"],
+            "questions_secondaires": ["Quels autres aspects ?", "Nuances importantes ?"],
+            "strategie": "Fallback contextuel général",
+            "analyse": f"Approfondissement de {base_query} avec focus sur {main_keyword}",
+            "plan_etapes": ["Recherche complémentaire", "Analyse", "Synthèse"],
+            "is_contextual": True
+        }
+
+    def synthesize_contextual_results(self, followup_query: str, search_results: List[Dict], scraped_articles: List[Dict], context_result: Dict) -> str:
+        """Synthétise les résultats d'une recherche contextuelle en intégrant le contexte précédent"""
+        
+        original_query = context_result.get('query', '')
+        original_synthesis = context_result.get('synthesis', '')
+        
+        # Préparer le contexte pour le prompt
+        context_summary = original_synthesis[:500] + "..." if len(original_synthesis) > 500 else original_synthesis
+        
+        # Préparer les résultats de recherche
+        search_summary = self._prepare_search_summary(search_results)
+        articles_content = self._prepare_articles_content(scraped_articles)
+        
+        prompt = f"""Tu es un expert en recherche et synthèse d'informations. 
+
+CONTEXTE DE LA RECHERCHE PRÉCÉDENTE:
+Question originale: "{original_query}"
+Synthèse précédente: {context_summary}
+
+NOUVELLE QUESTION DE SUIVI: "{followup_query}"
+
+NOUVEAUX RÉSULTATS DE RECHERCHE:
+{search_summary}
+
+NOUVEAUX ARTICLES ANALYSÉS:
+{articles_content}
+
+INSTRUCTIONS:
+1. Réponds SPÉCIFIQUEMENT à la question de suivi "{followup_query}"
+2. INTÈGRE intelligemment les informations de la recherche précédente quand c'est pertinent
+3. METS EN ÉVIDENCE les connexions entre les résultats précédents et les nouveaux
+4. Structure ta réponse de manière claire et complète
+5. Indique quand tu enrichis ou nuances les informations précédentes
+
+Format de réponse souhaité:
+- Introduction rappelant le lien avec la recherche précédente
+- Réponse détaillée à la question de suivi
+- Connexions et nuances par rapport aux résultats précédents
+- Conclusion synthétique
+
+Écris en français et sois précis et informatif."""
+
+        try:
+            synthesis = self.generate_completion(prompt, max_tokens=1000)
+            
+            if synthesis:
+                # Ajouter un header contextuel
+                contextual_header = f"**🔗 Recherche contextuelle basée sur:** \"{original_query}\"\n\n"
+                return contextual_header + synthesis
+            else:
+                return self._generate_fallback_contextual_synthesis(followup_query, original_query, search_results, scraped_articles)
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur synthèse contextuelle: {e}")
+            return self._generate_fallback_contextual_synthesis(followup_query, original_query, search_results, scraped_articles)
+
+    def _generate_fallback_contextual_synthesis(self, followup_query: str, original_query: str, search_results: List[Dict], scraped_articles: List[Dict]) -> str:
+        """Génère une synthèse contextuelle de fallback"""
+        
+        synthesis = f"**🔗 Recherche contextuelle basée sur:** \"{original_query}\"\n\n"
+        synthesis += f"**Réponse à votre question de suivi:** {followup_query}\n\n"
+        
+        if search_results:
+            synthesis += f"**📊 Nouveaux résultats trouvés:** {len(search_results)} sources analysées\n\n"
+            
+            # Résumé des points clés des résultats
+            synthesis += "**🔍 Points clés identifiés:**\n"
+            for i, result in enumerate(search_results[:5], 1):
+                snippet = result.get('snippet', '')[:150] + "..." if len(result.get('snippet', '')) > 150 else result.get('snippet', '')
+                synthesis += f"{i}. {snippet}\n"
+            synthesis += "\n"
+        
+        if scraped_articles:
+            synthesis += f"**📰 Articles analysés en détail:** {len(scraped_articles)} articles\n\n"
+            
+            # Extraits des articles les plus pertinents
+            synthesis += "**💡 Informations complémentaires:**\n"
+            for i, article in enumerate(scraped_articles[:3], 1):
+                content = article.get('content', '')[:200] + "..." if len(article.get('content', '')) > 200 else article.get('content', '')
+                synthesis += f"• **{article.get('title', 'Article')}:** {content}\n"
+            synthesis += "\n"
+        
+        synthesis += "**🎯 Cette recherche contextuelle vient enrichir vos connaissances précédentes "
+        synthesis += f"sur \"{original_query}\" en apportant des éléments spécifiques à votre question de suivi.**"
+        
+        return synthesis
+
+    def _prepare_search_summary(self, search_results: List[Dict]) -> str:
+        """Prépare un résumé des résultats de recherche pour le prompt"""
+        if not search_results:
+            return "Aucun résultat de recherche trouvé."
+        
+        summary = f"Résultats trouvés ({len(search_results)} sources):\n"
+        for i, result in enumerate(search_results[:10], 1):  # Limiter à 10 pour éviter un prompt trop long
+            title = result.get('title', 'Titre non disponible')
+            snippet = result.get('snippet', 'Extrait non disponible')[:200]
+            summary += f"{i}. {title}\n   {snippet}...\n"
+        
+        return summary
+
+    def _prepare_articles_content(self, scraped_articles: List[Dict]) -> str:
+        """Prépare le contenu des articles scrapés pour le prompt"""
+        if not scraped_articles:
+            return "Aucun article analysé en détail."
+        
+        content = f"Articles analysés ({len(scraped_articles)} articles):\n"
+        for i, article in enumerate(scraped_articles[:5], 1):  # Limiter à 5 articles
+            title = article.get('title', 'Titre non disponible')
+            article_content = article.get('content', 'Contenu non disponible')[:300]  # Limiter la taille
+            content += f"{i}. {title}\n   {article_content}...\n"
+        
+        return content
+
     def synthesize_results(self, query: str, search_results: List[Dict], scraped_articles: List[Dict]) -> str:
         """Synthétise les résultats de recherche"""
         

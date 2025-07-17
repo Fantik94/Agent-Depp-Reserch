@@ -1,10 +1,17 @@
 import streamlit as st
+import pandas as pd
 import logging
+import sys
+import os
 import time
+from datetime import datetime
+from typing import Dict, List
 from research_agent import ResearchAgent
+from link_ranker import *
 from config import Config
 from link_ranker import display_ranked_links
 import json
+import threading
 import threading
 from datetime import datetime
 import pandas as pd
@@ -181,6 +188,28 @@ def init_session_state():
         st.session_state.search_logs = []
     if 'search_start_time' not in st.session_state:
         st.session_state.search_start_time = None
+    
+    # Nouveaux états pour la prévisualisation du plan
+    if 'preview_plan' not in st.session_state:
+        st.session_state.preview_plan = None
+    if 'plan_approved' not in st.session_state:
+        st.session_state.plan_approved = False
+    if 'regenerate_plan' not in st.session_state:
+        st.session_state.regenerate_plan = False
+    if 'current_query' not in st.session_state:
+        st.session_state.current_query = ""
+    if 'current_config' not in st.session_state:
+        st.session_state.current_config = {}
+    
+    # Nouveaux états pour la recherche contextuelle
+    if 'research_context' not in st.session_state:
+        st.session_state.research_context = None
+    if 'followup_query' not in st.session_state:
+        st.session_state.followup_query = ""
+    if 'research_chain' not in st.session_state:
+        st.session_state.research_chain = []
+    if 'contextual_search_active' not in st.session_state:
+        st.session_state.contextual_search_active = False
 
 def get_agent(llm_provider: str, search_engines: List[str], scraping_method: str):
     """Obtient un agent configuré selon les paramètres"""
@@ -497,13 +526,22 @@ class SearchProgressTracker:
         """Termine une étape"""
         duration = self.get_duration(self.step_start_time)
         update_search_step(step_id, "completed", title, details, duration)
-        
+    
     def error_step(self, step_id: str, title: str, details: str = ""):
         """Marque une étape comme échouée"""
         duration = self.get_duration(self.step_start_time)
         update_search_step(step_id, "error", title, details, duration)
+    
+    def mark_error(self, step_id: str, title: str, details: str = ""):
+        """Alias pour error_step pour compatibilité"""
+        self.error_step(step_id, title, details)
+    
+    def get_total_duration(self):
+        """Calcule la durée totale depuis le début"""
+        total_duration = time.time() - self.start_time
+        return f"{total_duration:.1f}s"
 
-def research_with_progress_tracking(agent, query, deep_search=False, max_articles=5, search_engines=None, scraping_method="both", max_results=10, max_queries=6):
+def research_with_progress_tracking(agent, query, deep_search=False, max_articles=5, search_engines=None, scraping_method="both", max_results=10, max_queries=6, predefined_plan=None):
     """Effectue la recherche avec suivi du progrès"""
     tracker = SearchProgressTracker()
     
@@ -515,19 +553,28 @@ def research_with_progress_tracking(agent, query, deep_search=False, max_article
         if not st.session_state.get('search_running', True):
             logger.info("🛑 Recherche interrompue par l'utilisateur")
             return None
-        # Étape 1: Génération du plan
-        tracker.start_step("plan", "Génération du plan", "Analyse de votre question avec Mistral AI")
         
-        # Générer un plan intelligent (toujours approfondi maintenant)
-        plan = agent.llm_client.generate_deep_search_plan(query)
+        # Étape 1: Utiliser le plan prédéfini ou en générer un nouveau
+        if predefined_plan:
+            # Utiliser le plan approuvé par l'utilisateur
+            tracker.start_step("plan", "Utilisation du plan approuvé", "Plan de recherche validé par l'utilisateur")
+            plan = predefined_plan
+            tracker.complete_step("plan", "Plan utilisé", "Plan de recherche approuvé utilisé")
+        else:
+            # Génération du plan (mode legacy)
+            tracker.start_step("plan", "Génération du plan", "Analyse de votre question avec Mistral AI")
+            
+            # Générer un plan intelligent (toujours approfondi maintenant)
+            plan = agent.llm_client.generate_deep_search_plan(query)
+            
+            queries_count = len(plan.get("requetes_recherche", [query]))
+            mode_text = "approfondie" if deep_search else "standard"
+            tracker.complete_step("plan", "Plan généré", f"{queries_count} requêtes de recherche créées (mode {mode_text})")
         
         # Limiter le nombre de requêtes selon la configuration
         all_queries = plan.get("requetes_recherche", [query])
         limited_queries = all_queries[:max_queries]
-        
         queries_count = len(limited_queries)
-        mode_text = "approfondie" if deep_search else "standard"
-        tracker.complete_step("plan", "Plan généré", f"{queries_count} requêtes de recherche créées (mode {mode_text}, max={max_queries})")
         
         # Étape 2: Recherche web
         tracker.start_step("search", "Recherche web", f"Exécution de {queries_count} requêtes de recherche")
@@ -706,6 +753,9 @@ def display_results(result):
     
     with tab4:
         display_advanced_metrics(result)
+    
+    # NOUVELLE SECTION : Interface de questions de suivi
+    display_followup_interface(result)
 
 def display_sidebar():
     """Affiche la sidebar simplifiée et efficace"""
@@ -954,7 +1004,7 @@ def display_ranked_links(result):
             st.code(urls_text)
      
     # Section filtres
-    with st.expander("🔧 Filtrer les résultats"):
+    with st.expander("�� Filtrer les résultats"):
         col_filter1, col_filter2 = st.columns(2)
         
         with col_filter1:
@@ -1404,6 +1454,323 @@ def display_advanced_metrics(result):
     else:
         st.write("✅ Excellente recherche ! Aucune amélioration majeure nécessaire.")
 
+def display_plan_preview(plan, user_query):
+    """Affiche la prévisualisation du plan de recherche avec options"""
+    st.markdown("### 📋 Prévisualisation du plan de recherche")
+    
+    # Affichage du plan dans un style attractif
+    with st.container():
+        # En-tête avec la question
+        st.info(f"🎯 **Question analysée :** {user_query}")
+        
+        # Analyse de la question (si disponible)
+        if plan.get('analyse'):
+            st.markdown(f"🧠 **Analyse :** {plan['analyse']}")
+        
+        # Plan d'action en étapes
+        if plan.get('plan_etapes'):
+            st.markdown("**📊 Plan d'action :**")
+            for i, etape in enumerate(plan['plan_etapes'], 1):
+                st.markdown(f"   {i}. {etape}")
+        
+        # Requêtes de recherche prévues
+        st.markdown("**🔍 Requêtes de recherche qui seront exécutées :**")
+        queries = plan.get('requetes_recherche', [])
+        for i, query in enumerate(queries, 1):
+            st.markdown(f"   {i}. `{query}`")
+        
+        # Informations complémentaires
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**📚 Types de sources ciblées :**")
+            for source_type in plan.get('types_sources', []):
+                st.markdown(f"   • {source_type}")
+        
+        with col2:
+            st.markdown("**❓ Questions secondaires :**")
+            for question in plan.get('questions_secondaires', []):
+                st.markdown(f"   • {question}")
+        
+        # Stratégie
+        if plan.get('strategie'):
+            st.markdown(f"**🎲 Stratégie :** {plan['strategie']}")
+        
+        st.markdown("---")
+        
+        # Boutons d'action
+        col1, col2, col3 = st.columns([2, 2, 1])
+        
+        with col1:
+            if st.button("✅ Accepter ce plan et lancer la recherche", type="primary", use_container_width=True):
+                st.session_state.plan_approved = True
+                # Ne pas effacer le plan ici - il sera effacé après la recherche
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 Générer un nouveau plan", type="secondary", use_container_width=True):
+                st.session_state.regenerate_plan = True
+                st.rerun()
+        
+        with col3:
+            if st.button("❌ Annuler", use_container_width=True):
+                st.session_state.preview_plan = None
+                st.session_state.plan_approved = False
+                st.rerun()
+        
+        # Message d'aide
+        st.markdown("💡 **Conseil :** Vérifiez que les requêtes couvrent bien tous les aspects de votre question avant de lancer la recherche.")
+
+def display_followup_interface(result):
+    """Affiche l'interface pour poser des questions de suivi"""
+    st.markdown("---")
+    st.markdown("### 🔄 Questions de suivi")
+    st.markdown("Posez une question complémentaire basée sur les résultats obtenus. L'IA utilisera le contexte de votre recherche précédente.")
+    
+    # Suggestions de questions basées sur les résultats
+    with st.expander("💡 Suggestions de questions de suivi", expanded=False):
+        suggestions = generate_followup_suggestions(result)
+        st.markdown("**Voici quelques questions que vous pourriez poser :**")
+        
+        for i, suggestion in enumerate(suggestions, 1):
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"{i}. {suggestion}")
+            with col2:
+                if st.button(f"Utiliser", key=f"suggestion_{i}"):
+                    st.session_state.followup_query = suggestion
+                    st.rerun()
+    
+    # Champ de saisie pour la question de suivi
+    followup_query = st.text_input(
+        "🤔 Votre question de suivi :",
+        value=st.session_state.get('followup_query', ''),
+        placeholder="Ex: Quels sont les risques de cette approche ? / Peut-on avoir plus de détails sur... ?",
+        help="Cette question sera enrichie avec le contexte de votre recherche précédente"
+    )
+    
+    # Boutons d'action
+    col1, col2, col3 = st.columns([2, 2, 1])
+    
+    with col1:
+        if st.button("🔍 Recherche contextuelle", type="primary", use_container_width=True, disabled=not followup_query.strip()):
+            # Lancer une recherche contextuelle
+            st.session_state.followup_query = followup_query.strip()
+            st.session_state.contextual_search_active = True
+            st.session_state.research_context = result
+            st.rerun()
+    
+    with col2:
+        if st.button("🔄 Nouvelle recherche complète", type="secondary", use_container_width=True):
+            # Effacer le contexte et commencer une nouvelle recherche
+            st.session_state.research_context = None
+            st.session_state.research_chain = []
+            st.session_state.last_result = None
+            st.session_state.followup_query = ""
+            st.info("💫 Contexte effacé. Vous pouvez maintenant faire une nouvelle recherche complète.")
+            st.rerun()
+    
+    with col3:
+        if st.button("📋 Historique", use_container_width=True):
+            show_research_chain()
+    
+    # Afficher la chaîne de recherches si elle existe
+    if st.session_state.research_chain:
+        with st.expander(f"🔗 Chaîne de recherches ({len(st.session_state.research_chain)} étapes)", expanded=False):
+            for i, search_item in enumerate(st.session_state.research_chain, 1):
+                st.markdown(f"**{i}. {search_item['type']}:** {search_item['query']}")
+                if search_item.get('summary'):
+                    st.caption(f"📝 {search_item['summary'][:100]}...")
+
+def generate_followup_suggestions(result):
+    """Génère des suggestions de questions de suivi basées sur les résultats"""
+    original_query = result.get('query', '')
+    plan = result.get('plan', {})
+    
+    suggestions = []
+    
+    # Suggestions basées sur les questions secondaires du plan
+    if plan.get('questions_secondaires'):
+        suggestions.extend(plan['questions_secondaires'][:2])
+    
+    # Suggestions génériques adaptatives
+    if 'avantages' in original_query.lower() or 'inconvénients' in original_query.lower():
+        suggestions.append("Quelles sont les alternatives à considérer ?")
+        suggestions.append("Y a-t-il des études récentes sur ce sujet ?")
+    elif 'comment' in original_query.lower():
+        suggestions.append("Quels sont les risques ou précautions à prendre ?")
+        suggestions.append("Combien de temps faut-il pour voir des résultats ?")
+    elif 'comparaison' in original_query.lower() or 'vs' in original_query.lower():
+        suggestions.append("Quels sont les critères de choix les plus importants ?")
+        suggestions.append("Y a-t-il d'autres options à considérer ?")
+    else:
+        suggestions.extend([
+            "Quels sont les aspects les plus importants à retenir ?",
+            "Y a-t-il des développements récents sur ce sujet ?",
+            "Quelles sont les meilleures pratiques recommandées ?",
+            "Peut-on avoir des exemples concrets ?",
+            "Quels sont les points de vigilance ?"
+        ])
+    
+    return suggestions[:5]  # Limiter à 5 suggestions
+
+def show_research_chain():
+    """Affiche la chaîne complète des recherches dans une modal"""
+    if st.session_state.research_chain:
+        st.markdown("#### 🔗 Historique complet des recherches")
+        for i, search_item in enumerate(st.session_state.research_chain, 1):
+            with st.container():
+                st.markdown(f"**Étape {i} - {search_item['type']}**")
+                st.markdown(f"🎯 **Question :** {search_item['query']}")
+                if search_item.get('summary'):
+                    st.markdown(f"📝 **Résumé :** {search_item['summary']}")
+                st.markdown("---")
+    else:
+        st.info("Aucun historique de recherche pour le moment.")
+
+def contextual_research_with_progress(agent, followup_query, context_result, max_articles=5, search_engines=None, scraping_method="both", max_results=10, max_queries=6):
+    """Effectue une recherche contextuelle enrichie avec les résultats précédents"""
+    tracker = SearchProgressTracker()
+    
+    if search_engines is None:
+        search_engines = ["SerpApi", "SearXNG"]
+    
+    try:
+        # Vérifier si la recherche doit continuer
+        if not st.session_state.get('search_running', True):
+            logger.info("🛑 Recherche contextuelle interrompue par l'utilisateur")
+            return None
+        
+        # Étape 1: Enrichissement contextuel de la question
+        tracker.start_step("context", "Enrichissement contextuel", "Analyse de votre question avec le contexte précédent")
+        
+        # Créer un prompt enrichi qui inclut le contexte
+        context_prompt = create_contextual_prompt(followup_query, context_result)
+        
+        # Générer un plan intelligent enrichi avec le contexte
+        plan = agent.llm_client.generate_contextual_search_plan(context_prompt, context_result)
+        
+        # Limiter le nombre de requêtes
+        all_queries = plan.get("requetes_recherche", [followup_query])
+        limited_queries = all_queries[:max_queries]
+        queries_count = len(limited_queries)
+        
+        tracker.complete_step("context", "Contexte intégré", f"{queries_count} requêtes contextuelles générées")
+        
+        # Étape 2: Recherche web contextuelle
+        tracker.start_step("search", "Recherche contextuelle", f"Recherche enrichie avec {queries_count} requêtes")
+        all_search_results = []
+        
+        for i, search_query in enumerate(limited_queries, 1):
+            if not st.session_state.get('search_running', True):
+                logger.info("🛑 Recherche interrompue pendant la recherche web contextuelle")
+                return None
+                
+            add_search_log(f"🔍 Requête contextuelle {i}/{queries_count}: {search_query}")
+            results = agent.search_api.search_web(search_query, max_results=max_results, enabled_engines=search_engines)
+            all_search_results.extend(results)
+            
+            progress_details = f"Requête contextuelle {i}/{queries_count} - {len(results)} résultats"
+            update_search_step("search", "active", "Recherche contextuelle", progress_details)
+        
+        # Supprimer les doublons
+        unique_results = []
+        seen_urls = set()
+        for result in all_search_results:
+            if result['url'] not in seen_urls:
+                seen_urls.add(result['url'])
+                unique_results.append(result)
+        
+        tracker.complete_step("search", "Recherche contextuelle terminée", f"{len(unique_results)} nouveaux résultats trouvés")
+        
+        # Étape 3: Scraping contextuel
+        if not st.session_state.get('search_running', True):
+            logger.info("🛑 Recherche interrompue avant le scraping contextuel")
+            return None
+            
+        tracker.start_step("scraping", "Analyse contextuelle", f"Extraction de {min(len(unique_results), max_articles)} nouvelles sources")
+        urls_to_scrape = [result['url'] for result in unique_results[:max_articles * 2]]
+        scraped_articles = agent.scraper.scrape_multiple_urls(urls_to_scrape, max_articles=max_articles, method=scraping_method)
+        
+        tracker.complete_step("scraping", "Articles contextuels analysés", f"{len(scraped_articles)} nouveaux articles extraits")
+        
+        # Étape 4: Synthèse contextuelle enrichie
+        if not st.session_state.get('search_running', True):
+            logger.info("🛑 Recherche interrompue avant la synthèse contextuelle")
+            return None
+            
+        tracker.start_step("synthesis", "Synthèse contextuelle", "Intégration avec les résultats précédents")
+        
+        # Synthèse qui intègre le contexte précédent
+        synthesis = agent.llm_client.synthesize_contextual_results(
+            followup_query, 
+            unique_results, 
+            scraped_articles, 
+            context_result
+        )
+        
+        tracker.complete_step("synthesis", "Synthèse contextuelle terminée", "Résultats intégrés avec le contexte")
+        
+        # Préparer le résultat final contextuel
+        result = {
+            "query": followup_query,
+            "original_query": context_result.get('query', ''),
+            "is_contextual": True,
+            "context_summary": context_result.get('synthesis', '')[:300] + "...",
+            "plan": plan,
+            "search_results": unique_results,
+            "scraped_articles": scraped_articles,
+            "synthesis": synthesis,
+            "stats": {
+                "search_results_count": len(unique_results),
+                "scraped_articles_count": len(scraped_articles),
+                "search_queries_used": len(plan.get("requetes_recherche", [])),
+                "total_duration": tracker.get_total_duration()
+            }
+        }
+        
+        # Ajouter à la chaîne de recherches
+        add_to_research_chain("Recherche contextuelle", followup_query, synthesis[:200] + "...")
+        
+        logger.info("✅ Recherche contextuelle terminée avec succès")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur recherche contextuelle: {e}")
+        tracker.mark_error("synthesis", "Erreur synthèse", str(e))
+        raise e
+
+def create_contextual_prompt(followup_query, context_result):
+    """Crée un prompt enrichi avec le contexte de la recherche précédente"""
+    original_query = context_result.get('query', '')
+    original_synthesis = context_result.get('synthesis', '')[:500]  # Limiter la taille
+    
+    context_prompt = f"""Question originale: "{original_query}"
+
+Résumé des résultats précédents:
+{original_synthesis}
+
+Question de suivi: "{followup_query}"
+
+Contexte: L'utilisateur pose cette question de suivi basée sur les résultats de sa recherche précédente. La nouvelle recherche doit être enrichie et complémentaire."""
+    
+    return context_prompt
+
+def add_to_research_chain(search_type, query, summary):
+    """Ajoute une recherche à la chaîne d'historique"""
+    if 'research_chain' not in st.session_state:
+        st.session_state.research_chain = []
+    
+    st.session_state.research_chain.append({
+        'type': search_type,
+        'query': query,
+        'summary': summary,
+        'timestamp': time.strftime("%H:%M:%S")
+    })
+    
+    # Limiter à 10 éléments pour éviter une chaîne trop longue
+    if len(st.session_state.research_chain) > 10:
+        st.session_state.research_chain = st.session_state.research_chain[-10:]
+
 def main():
     """Fonction principale"""
     init_session_state()
@@ -1455,44 +1822,94 @@ def main():
                 if st.session_state.get('search_running', False):
                     st.markdown('<script>window.scrollTo(0, document.body.scrollHeight);</script>', unsafe_allow_html=True)
     
-    # Gérer la recherche
-    if search_button and user_query:
-        # 🧹 CLEAR AUTOMATIQUE - Nettoyer l'interface pour une nouvelle recherche
+    # ========== NOUVELLE LOGIQUE DE PRÉVISUALISATION DU PLAN ==========
+    
+    # 1. GÉNÉRATION DU PLAN (première étape)
+    if search_button and user_query and not st.session_state.get('preview_plan'):
+        # Nettoyer l'interface pour la nouvelle recherche
         st.session_state.last_result = None
         st.session_state.search_steps = {}
         st.session_state.search_logs = []
+        st.session_state.plan_approved = False
+        st.session_state.regenerate_plan = False
         
+        # Configurer l'agent
+        st.session_state.agent = get_agent(llm_provider, search_engines, scraping_method)
+        st.session_state.current_query = user_query
+        st.session_state.current_config = {
+            'deep_search': deep_search,
+            'max_articles': max_articles,
+            'search_engines': search_engines,
+            'scraping_method': scraping_method,
+            'max_results': max_results,
+            'max_queries': max_queries,
+            'llm_provider': llm_provider
+        }
+        
+        # Générer le plan de recherche
+        with st.spinner("🧠 Génération du plan de recherche..."):
+            try:
+                plan = st.session_state.agent.llm_client.generate_deep_search_plan(user_query)
+                st.session_state.preview_plan = plan
+                st.success("✅ Plan de recherche généré ! Vérifiez-le ci-dessous.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la génération du plan: {str(e)}")
+    
+    # 2. RÉGÉNÉRATION DU PLAN (si demandée)
+    if st.session_state.get('regenerate_plan', False):
+        st.session_state.regenerate_plan = False
+        
+        with st.spinner("🔄 Génération d'un nouveau plan..."):
+            try:
+                # Régénérer avec un prompt légèrement différent pour avoir de la variété
+                plan = st.session_state.agent.llm_client.generate_deep_search_plan(st.session_state.current_query)
+                st.session_state.preview_plan = plan
+                st.success("✅ Nouveau plan généré !")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la régénération: {str(e)}")
+    
+    # 3. AFFICHAGE DE LA PRÉVISUALISATION
+    if st.session_state.get('preview_plan') and not st.session_state.get('plan_approved', False):
+        display_plan_preview(st.session_state.preview_plan, st.session_state.current_query)
+    
+    # 4. LANCEMENT DE LA RECHERCHE (après approbation du plan)
+    if st.session_state.get('plan_approved', False) and st.session_state.get('preview_plan'):
         # Ajouter à l'historique
-        if user_query not in st.session_state.search_history:
-            st.session_state.search_history.append(user_query)
+        if st.session_state.current_query not in st.session_state.search_history:
+            st.session_state.search_history.append(st.session_state.current_query)
         
         # Marquer le début de la recherche
         st.session_state.search_running = True
         
-        # Configurer le provider LLM sélectionné
-        st.session_state.agent = get_agent(llm_provider, search_engines, scraping_method)
-        
         # Messages de démarrage
         add_search_log("🧹 Interface nettoyée - Nouvelle recherche")
-        config_info = f"🤖 {llm_provider.upper()} | 🔍 {', '.join(search_engines)} | 📰 {scraping_method}"
+        config = st.session_state.current_config
+        config_info = f"🤖 {config['llm_provider'].upper()} | 🔍 {', '.join(config['search_engines'])} | 📰 {config['scraping_method']}"
         add_search_log(f"⚙️ Configuration: {config_info}")
-        add_search_log(f"🎯 Question: {user_query}")
+        add_search_log(f"🎯 Question: {st.session_state.current_query}")
+        add_search_log("📋 Plan de recherche approuvé par l'utilisateur")
+        
+        # Ajouter à la chaîne de recherches (première recherche)
+        add_to_research_chain("Recherche initiale", st.session_state.current_query, "Recherche lancée...")
         
         # Placeholder pour les mises à jour en temps réel
         progress_placeholder = st.empty()
         
         try:
-            # Effectuer la recherche avec suivi
+            # Effectuer la recherche avec suivi (en utilisant le plan approuvé)
             with st.spinner("🔄 Recherche en cours..."):
                 result = research_with_progress_tracking(
                     st.session_state.agent, 
-                    user_query, 
-                    deep_search=deep_search, 
-                    max_articles=max_articles,
-                    search_engines=search_engines,
-                    scraping_method=scraping_method,
-                    max_results=max_results,
-                    max_queries=max_queries
+                    st.session_state.current_query, 
+                    deep_search=config['deep_search'], 
+                    max_articles=config['max_articles'],
+                    search_engines=config['search_engines'],
+                    scraping_method=config['scraping_method'],
+                    max_results=config['max_results'],
+                    max_queries=config['max_queries'],
+                    predefined_plan=st.session_state.preview_plan  # Passer le plan approuvé
                 )
                 
                 # Vérifier si la recherche a été interrompue
@@ -1502,9 +1919,17 @@ def main():
                     return
                 
                 st.session_state.last_result = result
+                
+                # Mettre à jour la chaîne avec le résumé
+                if st.session_state.research_chain:
+                    st.session_state.research_chain[-1]['summary'] = result.get('synthesis', '')[:200] + "..."
             
             st.success("✅ Recherche terminée avec succès !")
             st.session_state.search_running = False
+            
+            # Nettoyer les états de plan
+            st.session_state.plan_approved = False
+            st.session_state.preview_plan = None
             
         except Exception as e:
             st.session_state.search_running = False
@@ -1518,25 +1943,99 @@ def main():
                 for log in st.session_state.search_logs[-10:]:
                     st.write(f"[{log['time']}] {log['message']}")
     
+    # ========== NOUVELLE LOGIQUE DE RECHERCHE CONTEXTUELLE ==========
+    
+    # 5. GESTION DE LA RECHERCHE CONTEXTUELLE
+    if st.session_state.get('contextual_search_active', False):
+        st.session_state.contextual_search_active = False
+        
+        # Nettoyer les logs et étapes pour la nouvelle recherche
+        st.session_state.search_steps = {}
+        st.session_state.search_logs = []
+        
+        # Marquer le début de la recherche contextuelle
+        st.session_state.search_running = True
+        
+        # Configurer l'agent (utiliser la config précédente ou par défaut)
+        if not hasattr(st.session_state, 'agent') or st.session_state.agent is None:
+            st.session_state.agent = get_agent("mistral", ["SerpApi"], "both")
+        
+        # Messages de démarrage pour la recherche contextuelle
+        add_search_log("🔄 Démarrage de la recherche contextuelle")
+        add_search_log(f"💡 Question de suivi: {st.session_state.followup_query}")
+        add_search_log(f"📚 Utilisation du contexte de: {st.session_state.research_context.get('query', 'N/A')}")
+        
+        try:
+            # Effectuer la recherche contextuelle
+            with st.spinner("🔄 Recherche contextuelle en cours..."):
+                contextual_result = contextual_research_with_progress(
+                    st.session_state.agent,
+                    st.session_state.followup_query,
+                    st.session_state.research_context,
+                    max_articles=5,
+                    search_engines=["SerpApi"],
+                    scraping_method="both",
+                    max_results=10,
+                    max_queries=4  # Moins de requêtes pour les recherches de suivi
+                )
+                
+                # Vérifier si la recherche a été interrompue
+                if contextual_result is None:
+                    st.warning("🛑 Recherche contextuelle interrompue par l'utilisateur")
+                    st.session_state.search_running = False
+                    return
+                
+                st.session_state.last_result = contextual_result
+            
+            st.success("✅ Recherche contextuelle terminée avec succès !")
+            st.session_state.search_running = False
+            
+            # Nettoyer les états
+            st.session_state.followup_query = ""
+            
+        except Exception as e:
+            st.session_state.search_running = False
+            st.error(f"❌ Erreur lors de la recherche contextuelle: {str(e)}")
+            logger.error(f"Erreur recherche contextuelle: {e}")
+            
+            # Afficher les détails de l'erreur
+            with st.expander("🔍 Détails de l'erreur"):
+                st.code(str(e))
+                st.write("**Logs de debug :**")
+                for log in st.session_state.search_logs[-10:]:
+                    st.write(f"[{log['time']}] {log['message']}")
+    
     # Afficher les résultats
     if st.session_state.last_result:
+        # Afficher un badge pour les résultats contextuels
+        if st.session_state.last_result.get('is_contextual', False):
+            st.info(f"🔗 **Résultats contextuels** basés sur votre recherche précédente: \"{st.session_state.last_result.get('original_query', 'N/A')}\"")
+        
         display_results(st.session_state.last_result)
     
-    # Instructions
-    if not st.session_state.last_result:
+    # Instructions (seulement si pas de plan en cours et pas de résultats)
+    if not st.session_state.last_result and not st.session_state.get('preview_plan'):
         st.markdown("""
         ### 💡 Guide d'utilisation
         
         1. **Posez votre question** dans le champ ci-dessus
-        2. **Cliquez sur "Lancer la recherche"** pour démarrer
-        3. **Suivez le progrès** en temps réel avec les étapes colorées
-        4. **Explorez les résultats** avec les sources et articles détaillés
+        2. **Cliquez sur "Lancer la recherche"** pour générer le plan
+        3. **Vérifiez le plan de recherche** proposé par l'IA
+        4. **Acceptez ou régénérez** le plan selon vos besoins
+        5. **Suivez le progrès** en temps réel avec les étapes colorées
+        6. **Explorez les résultats** avec les sources et articles détaillés
+        7. **Posez des questions de suivi** pour approfondir sans perdre le contexte
         
         **✨ Exemples de questions efficaces :**
         - `Intelligence artificielle avantages inconvénients`
         - `Télétravail impact productivité 2024`
         - `Changement climatique solutions`
         - `Jeûne intermittent effets santé`
+        
+        **🔄 Exemples de questions de suivi :**
+        - `Quels sont les risques de cette approche ?`
+        - `Peut-on avoir des exemples concrets ?`
+        - `Y a-t-il des alternatives ?`
         
         **🔧 Activez les logs** pour voir les détails techniques de la recherche.
         """)

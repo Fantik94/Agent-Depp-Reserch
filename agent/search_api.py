@@ -37,35 +37,57 @@ class SearchAPI:
             logger.error("❌ Pas de clé SerpApi")
             return []
         
+        # Vérifier que la clé n'est pas vide ou placeholder
+        if self.config.SERP_API_KEY in ["your_serp_api_key", "", "None", "null"]:
+            logger.error("❌ Clé SerpApi invalide ou placeholder")
+            return []
+        
         try:
             logger.info(f"🔍 SerpApi simple pour: {query}")
+            logger.debug(f"🔐 Utilisation clé SerpApi: {self.config.SERP_API_KEY[:10]}...")
             
             # EXACTEMENT comme l'ami
             params = {
                 "engine": "google",
                 "q": query,
                 "num": max_results,
-                "api_key": self.config.SERP_API_KEY
+                "api_key": self.config.SERP_API_KEY,
+                "hl": "fr",  # Langue française
+                "gl": "fr"   # Pays France pour de meilleurs résultats
             }
+            
+            logger.debug(f"📋 Paramètres SerpApi: {params}")
             
             search = GoogleSearch(params)
             results_dict = search.get_dict()
             
+            # Debug: afficher la structure de la réponse
+            logger.debug(f"🔍 Clés de réponse SerpApi: {list(results_dict.keys())}")
+            
             results = []
             if 'organic_results' in results_dict:
-                for item in results_dict['organic_results'][:max_results]:
+                logger.debug(f"📊 organic_results trouvés: {len(results_dict['organic_results'])} éléments")
+                for i, item in enumerate(results_dict['organic_results'][:max_results]):
+                    logger.debug(f"   Élément {i+1}: {item.get('title', 'Pas de titre')[:50]}...")
                     results.append({
                         'title': item.get('title', ''),
                         'url': item.get('link', ''),
                         'snippet': item.get('snippet', ''),
                         'source': 'serpapi'
                     })
+            else:
+                logger.warning("⚠️ Pas de 'organic_results' dans la réponse SerpApi")
+                if 'error' in results_dict:
+                    logger.error(f"❌ Erreur SerpApi: {results_dict['error']}")
+                if 'search_information' in results_dict:
+                    logger.debug(f"ℹ️ Info recherche: {results_dict.get('search_information', {})}")
             
             logger.info(f"✅ SerpApi: {len(results)} résultats")
             return results
             
         except Exception as e:
             logger.error(f"❌ Erreur SerpApi: {e}")
+            logger.error(f"❌ Type d'erreur: {type(e).__name__}")
             return []
     
     def search_web(self, query: str, max_results: int = None, enabled_engines: List[str] = None) -> List[Dict]:
@@ -78,12 +100,38 @@ class SearchAPI:
         
         logger.info(f"🚀 Recherche SIMPLE pour: '{query}'")
         
-        # Nettoyer la requête
+        # Nettoyer la requête de manière plus intelligente
         clean_query = query.strip()
-        if len(clean_query) > 80:
+        
+        # Si la requête est très longue, la simplifier intelligemment
+        if len(clean_query) > 60:  # Réduire le seuil de 80 à 60
             words = clean_query.split()
-            clean_query = " ".join(words[-4:])
-            logger.info(f"📝 Requête simplifiée: '{clean_query}'")
+            if len(words) > 8:  # Si plus de 8 mots
+                # Prendre les mots les plus importants (début + mots-clés)
+                important_words = []
+                
+                # Prendre les 3 premiers mots (souvent les plus importants)
+                important_words.extend(words[:3])
+                
+                # Chercher des mots-clés importants dans le reste
+                keywords = ['comment', 'qui', 'quoi', 'pourquoi', 'où', 'quand', 'meilleur', 'tendance', 'évolution']
+                for word in words[3:]:
+                    if word.lower() in keywords or len(word) > 5:  # Mots longs souvent importants
+                        important_words.append(word)
+                        if len(important_words) >= 6:  # Limiter à 6 mots max
+                            break
+                
+                clean_query = " ".join(important_words)
+                logger.info(f"📝 Requête intelligemment simplifiée: '{clean_query}'")
+            else:
+                # Si pas trop de mots mais string longue, garder les premiers 60 caractères
+                clean_query = clean_query[:60].rsplit(' ', 1)[0]  # Couper au dernier mot complet
+                logger.info(f"📝 Requête raccourcie: '{clean_query}'")
+        
+        # Vérifier que la requête n'est pas trop courte ou vide
+        if len(clean_query.strip()) < 3:
+            logger.warning(f"⚠️ Requête trop courte après nettoyage: '{clean_query}' - utilisation requête originale")
+            clean_query = query.strip()[:60]  # Fallback vers requête originale tronquée
         
         results = []
         
@@ -97,12 +145,23 @@ class SearchAPI:
                 if len(engine_results) > 0:
                     logger.info(f"✅ SerpApi a donné {len(engine_results)} résultats - on s'arrête")
                     break
+                else:
+                    # Si pas de résultats avec la requête nettoyée, essayer avec une version encore plus simple
+                    if clean_query != query.strip()[:30]:
+                        logger.info("🔄 Tentative avec requête encore plus simple...")
+                        simple_query = query.strip()[:30].rsplit(' ', 1)[0]
+                        if len(simple_query.strip()) >= 3:
+                            fallback_results = self.search_serpapi_simple(simple_query, max_results)
+                            if len(fallback_results) > 0:
+                                logger.info(f"✅ Requête simplifiée a donné {len(fallback_results)} résultats")
+                                results.extend(fallback_results)
+                                break
             else:
                 logger.warning(f"⚠️ Moteur {engine} non supporté")
         
         # PAS de sites pourris comme fallback !
         if len(results) == 0:
-            logger.warning("⚠️ Aucun résultat trouvé - pas de fallback pourri")
+            logger.warning(f"⚠️ Aucun résultat trouvé pour '{clean_query}' - pas de fallback pourri")
             return []
         
         # Nettoyer et dédupliquer
