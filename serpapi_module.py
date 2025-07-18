@@ -7,7 +7,7 @@ api_key = os.environ.get("SERPAPI_API_KEY")
 
 def google_search(query):
     if not api_key:
-        print("[ERREUR] Clé SERPAPI_API_KEY manquante dans le .env")
+        print("[ERREUR] Clé api")
         return []
     params = {
         "engine": "google",

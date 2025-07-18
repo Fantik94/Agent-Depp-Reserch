@@ -1,15 +1,20 @@
-import requests
-from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 
 def scrap_url(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        soup = BeautifulSoup(response.text, "html.parser")
-        paragraphs = soup.find_all('p')
-        text = "\n".join([p.get_text() for p in paragraphs])
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
+    options.add_argument('user-agent=Mozilla/5.0')
+    driver = webdriver.Chrome(options=options)
+    try:
+        driver.get(url)
+        paragraphs = driver.find_elements(By.TAG_NAME, 'p')
+        text = "\n".join([p.text for p in paragraphs])
         return text[:2000]
-    else:
-        return f"Erreur lors de la récupération de {url} : {response.status_code}" 
+    except Exception as e:
+        return f"Erreur lors de la récupération de {url} : {str(e)}"
+    finally:
+        driver.quit()
