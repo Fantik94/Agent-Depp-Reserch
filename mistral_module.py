@@ -5,7 +5,7 @@ import json
 
 load_dotenv()
 api_key = os.environ["MISTRAL_API_KEY"]
-model = "mistral-small-latest"
+model = "mistral-tiny"
 client = Mistral(api_key=api_key)
 
 def generateText(prompt: str, nb_results: int) -> dict:
